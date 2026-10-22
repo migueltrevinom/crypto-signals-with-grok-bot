@@ -1,0 +1,15 @@
+---
+description: Repositories architecture for this Python service. Equivalent of verifik-backend's repositories rule.
+alwaysApply: true
+---
+
+Use the repository layout under `Repositories/` and the shared helpers in `Core/`. See `docs/architecture.md` and `docs/coding-conventions.md`.
+
+- One domain per folder: `controllers/`, `models/`, `modules/`, `routes/`, `middlewares/`, `helpers/`, `tests/`.
+- Request flow is route → middleware (auth and Pydantic validation) → controller → module → model. Routes stay thin. Business rules live in modules.
+- Do not call a module from another module. Controllers and the worker (`app/worker.py`) are the composition roots. They may call several modules and pass the results in.
+- Every Mongo read goes through `Core.mongo_orm.build_query`. Do not call Motor or Beanie `find` from a module. Writes go through the Beanie document in that domain's `models/`.
+- Reach for `Core` before adding a new helper: config, database, errors, HTTP, cache, logging, pagination. Domain helpers stay pure and local.
+- Name files `snake_case` with the role suffix (`signal_controller.py`). Domain folders stay PascalCase, matching verifik-backend.
+- `Repositories/Arbitrage` and `Repositories/Futures/Positions` are reserved. Do not implement them until their roadmap phase, and do not register their models in `app/documents.py` before then.
+- The detection oracle is `prototype/`. Port it; do not change its rules while porting. Open questions are in `docs/strategy-spec.md`.
