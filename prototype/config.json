@@ -1,0 +1,62 @@
+{
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "ARBUSDT"
+  ],
+  "timeframes": [
+    "1h",
+    "6h",
+    "1d",
+    "1w"
+  ],
+  "ltf_map": {
+    "1w": "1d",
+    "1d": "6h",
+    "6h": "1h",
+    "1h": "15m"
+  },
+  "data_sources": [
+    "binance",
+    "binance_vision",
+    "bybit",
+    "okx"
+  ],
+  "history_bars": 1000,
+  "report_window_bars": 3,
+  "state_file": "state.json",
+  "state_retention_days": 120,
+  "params": {
+    "atr_length": 14,
+    "confirm_atr_mult": 0.7,
+    "sma_length": 70,
+    "mode_min_bars": 5,
+    "mode_max_bars": 20,
+    "swing_lookback": 5,
+    "consolidation_limit": 20,
+    "body_range_ratio": 0.6,
+    "mode_touch_density": 0.75,
+    "mode_touch_tol_atr": 0.02,
+    "expansion_rule": "either",
+    "confirm_types": [
+      "atr_expansion",
+      "close_outside_range",
+      "clear_gap"
+    ],
+    "body_cross_count_rule": {
+      "default": "confirm_bar",
+      "1w": "part_of_mode_next_bar"
+    },
+    "flip_window_bars": 3,
+    "flip_requires_engulfing": true,
+    "flip_requires_expansion": true,
+    "expiry_after_flip": false,
+    "block_min_bars_after": 2,
+    "sma_filter_timeframe": "entry",
+    "exit_rule": "two_lower_closes",
+    "enable_shorts": true,
+    "block_ttl_bars": 30,
+    "block_merge_atr": 0.25
+  }
+}
