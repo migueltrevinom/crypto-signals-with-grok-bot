@@ -169,8 +169,10 @@ The per-domain files, endpoints, fields, and indexes are in [repositories.md](re
 | --- | --- | --- |
 | `Users` | Accounts and roles | `users` |
 | `Auth` | Signup flag, JWT, user API keys | `api_keys`, `refresh_tokens` |
-| `Billing` | Plans, subscriptions, payment events | `plans`, `subscriptions`, `payment_events` |
-| `Publications` | Delayed per-user release of a signal | `publications` |
+| `Billing` | Plans, Stripe-synced entitlements, BTCPay and NOWPayments | `plans`, `entitlements`, `subscriptions`, `payment_events` |
+| `Publications` | Per-tier `release_at` fan-out | `publications` |
+| `Webhooks` | Signed outbound deliveries to the user's bot | `webhook_endpoints`, `webhook_deliveries` |
+| `Compliance` | Consents, disclosures, Canada futures gate. Not legal advice | `consents`, `disclosures`, `geo_rules` |
 | `Performance` | Append-only log and outcomes | `signal_logs`, `outcomes` |
 | `PaperTrading` | House and personal simulation | `paper_accounts`, `paper_fills` |
 | `ExchangeAccounts` | Later, encrypted trade-only keys | `exchange_accounts` |
@@ -194,7 +196,7 @@ There is no `Scanner` domain and no separate futures domain. Futures is a `marke
 
 ## Alert delivery
 
-Generation and publication are separate. The worker writes `signal_logs` at detection time. `Publications` fans that row out per user with `visible_at` set from the plan's `signal_delay_seconds`. Alerts are created from publications, not from the raw signal, once that phase exists. Until then the Grok Bot feed is the owner view.
+Generation and publication are separate. The worker appends `signal_logs` at the triggering candle close. `Publications` fans that row out with `release_at = created_at + signals.delay_seconds`, and every read filters on `release_at`. Alerts and signed webhooks are created from publications, not from the raw signal. Until that phase exists, the Grok Bot feed is the owner view.
 
 The first channel is `grok_chat`. The bot polls `GET /api/v1/alerts/feed` and posts `delivered` or `acked`. `GrokChatNotifier` does not push. Webhook, email, Telegram, and Discord are later kinds. A plan's `channels` list is what a subscriber may enable.
 

@@ -1,4 +1,7 @@
-"""Payment providers. Stripe first. Crypto uses the same subscription rows."""
+"""Payment providers. Stripe bills cards. BTCPay and NOWPayments are the crypto options.
+
+Crypto subscriptions use renewal_mode manual. Coinbase Commerce is not an adapter.
+"""
 
 from typing import Any, Protocol
 
@@ -25,13 +28,25 @@ class StripeProvider:
         raise NotImplementedError("Stripe webhooks are not implemented in the planning skeleton.")
 
 
-class CryptoProvider:
-    name = "crypto"
+class BtcPayProvider:
+    name = "btcpay"
 
     async def create_checkout(self, user_id: str, plan_code: str) -> dict[str, Any]:
         del user_id, plan_code
-        raise NotImplementedError("Crypto checkout is a later provider, not this pass.")
+        raise NotImplementedError("BTCPay subscriptions are specified and not implemented.")
 
     async def parse_webhook(self, body: bytes, signature: str) -> dict[str, Any]:
         del body, signature
-        raise NotImplementedError("Crypto payment events are a later provider, not this pass.")
+        raise NotImplementedError("BTCPay webhooks are specified and not implemented.")
+
+
+class NowPaymentsProvider:
+    name = "nowpayments"
+
+    async def create_checkout(self, user_id: str, plan_code: str) -> dict[str, Any]:
+        del user_id, plan_code
+        raise NotImplementedError("NOWPayments checkout is specified and not implemented.")
+
+    async def parse_webhook(self, body: bytes, signature: str) -> dict[str, Any]:
+        del body, signature
+        raise NotImplementedError("NOWPayments webhooks are specified and not implemented.")

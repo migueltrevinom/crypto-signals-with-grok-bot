@@ -78,7 +78,7 @@ The phases above are the personal-use build. Signup stays closed through them. T
 1. Personal use. Phases 1 through 6, plus the house paper account and the append-only `signal_logs` write (can land with phase 5).
 2. Paper track record. Forward fills only after `forward_started_at`. The public page stays off.
 3. Private beta. Invites, Stripe test mode, entitlements and delays enforced.
-4. Public paid launch. Blocked until a lawyer has answered the Alberta securities question. This repo does not give that answer. Then `PUBLIC_SIGNUP=true` and live payments.
+4. Public paid launch. Blocked until a lawyer has reviewed CSA/CIRO Staff Notice 31-369 and the NI 31-103 section 8.25 general-advice exemption, including whether a per-user sizing calculator is tailored advice. This repo does not give that answer. Then `PUBLIC_SIGNUP=true` and live payments. Futures signals stay geo-gated for Canada until that review says otherwise. v1 execution is signed webhooks, not exchange keys.
 
 Telegram and Discord are channel kinds in stage 4 or after, not before the feed and webhooks work. Exchange-account auto-execution is after the public launch, and still optional. It is not required to sell signals.
 

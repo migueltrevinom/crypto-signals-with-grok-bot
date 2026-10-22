@@ -356,5 +356,7 @@ The contract for each route is in [repositories.md](repositories.md). Short form
 | GET | `/api/v1/paper/accounts` | Empty page |
 | GET | `/api/v1/exchange-accounts` | Empty page. Keys are not accepted |
 | GET | `/api/v1/audit-logs` | Empty page |
+| GET | `/api/v1/webhooks/endpoints` | Empty page. No exchange keys |
+| GET | `/api/v1/compliance/gate` | Not legal advice. Lawyer review required. No API key |
 
 `POST`, `PUT`, `PATCH`, and `DELETE` are specified above and are not mounted yet. Calling them is 404. There is no order endpoint.

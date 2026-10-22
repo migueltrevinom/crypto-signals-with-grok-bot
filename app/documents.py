@@ -12,9 +12,13 @@ from Repositories.Auth.models.api_key_model import ApiKey
 from Repositories.Auth.models.refresh_token_model import RefreshToken
 from Repositories.Backtests.models.backtest_event_model import BacktestEvent
 from Repositories.Backtests.models.backtest_model import Backtest
+from Repositories.Billing.models.entitlement_model import Entitlement
 from Repositories.Billing.models.payment_event_model import PaymentEvent
 from Repositories.Billing.models.plan_model import Plan
 from Repositories.Billing.models.subscription_model import Subscription
+from Repositories.Compliance.models.consent_model import Consent
+from Repositories.Compliance.models.disclosure_model import Disclosure
+from Repositories.Compliance.models.geo_rule_model import GeoRule
 from Repositories.Dexes.models.dex_venue_model import DexVenue
 from Repositories.ExchangeAccounts.models.exchange_account_model import ExchangeAccount
 from Repositories.Exchanges.models.exchange_source_model import ExchangeSource
@@ -36,12 +40,15 @@ from Repositories.Strategies.TimeMode.models.strategy_config_model import Strate
 from Repositories.Symbols.models.symbol_model import Symbol
 from Repositories.Users.models.user_model import User
 from Repositories.Watchlists.models.watchlist_model import Watchlist
+from Repositories.Webhooks.models.webhook_delivery_model import WebhookDelivery
+from Repositories.Webhooks.models.webhook_endpoint_model import WebhookEndpoint
 
 DOCUMENT_MODELS = [
     User,
     ApiKey,
     RefreshToken,
     Plan,
+    Entitlement,
     Subscription,
     PaymentEvent,
     Publication,
@@ -51,6 +58,11 @@ DOCUMENT_MODELS = [
     PaperFill,
     ExchangeAccount,
     AuditLog,
+    Consent,
+    Disclosure,
+    GeoRule,
+    WebhookEndpoint,
+    WebhookDelivery,
     Symbol,
     AppSetting,
     ExchangeSource,

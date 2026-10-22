@@ -10,8 +10,10 @@ Runtime numbers Miguel has already decided (the ladder, the 6h SMA, confluence w
 | --- | --- | --- |
 | `Users` | `users` | Accounts and roles (`owner`, `admin`, `subscriber`, `free`) |
 | `Auth` | `api_keys`, `refresh_tokens` | Signup flag, JWT, API keys |
-| `Billing` | `plans`, `subscriptions`, `payment_events` | Tiers, entitlements, Stripe, crypto later |
-| `Publications` | `publications` | Per-subscriber release of a signal, with delay |
+| `Billing` | `plans`, `entitlements`, `subscriptions`, `payment_events` | Tiers, Stripe feature sync, BTCPay, NOWPayments |
+| `Publications` | `publications` | Per-tier `release_at` fan-out and read filter |
+| `Webhooks` | `webhook_endpoints`, `webhook_deliveries` | Signed outbound hooks. No exchange keys in v1 |
+| `Compliance` | `consents`, `disclosures`, `geo_rules` | Exemption-shaped product rules. Not legal advice |
 | `Performance` | `signal_logs`, `outcomes` | Append-only log and measured results |
 | `PaperTrading` | `paper_accounts`, `paper_fills` | Simulated track record |
 | `ExchangeAccounts` | `exchange_accounts` | Later, encrypted trade-only keys |
@@ -503,14 +505,17 @@ Skeleton: `GET /api/v1/auth/config` returns `public_signup: false`. API key list
 | `middlewares/billing_middleware.py` | Webhook raw body is not parsed as JSON before signature check |
 | `controllers/billing_controller.py` | Plans, subscriptions, webhook ack |
 | `modules/billing_module.py` | State machine. Calls a provider. Does not import Auth |
-| `modules/providers.py` | `PaymentProvider` protocol, `StripeProvider`, `CryptoProvider` |
+| `modules/providers.py` | `PaymentProvider`, `StripeProvider`, `BtcPayProvider`, `NowPaymentsProvider` |
+| `models/entitlement_model.py` | `Entitlement`, the user's effective Stripe feature set |
 | `models/plan_model.py` | `Plan` |
 | `models/subscription_model.py` | `Subscription` |
 | `models/payment_event_model.py` | `PaymentEvent` |
 
-`plans`: `code` (unique), `name`, `public`, `currency`, `interval`, `price_cents` (null until set), `trial_days`, `grace_days`, `entitlements`, timestamps.
+`plans`: `code` (unique), `kind` (`base` or `addon`), `name`, `public`, `currency`, `interval`, `price_cents` (null until set), `price_hypothesis` (text, not a charge), `attaches_to`, `trial_days`, `grace_days`, `entitlements`, timestamps. Seed codes are `free`, `starter`, `pro`, and the `arbitrage` add-on.
 
-`subscriptions`: `user_id`, `plan_code`, `status`, `provider` (`stripe` or `crypto`), `provider_customer_id`, `provider_subscription_id`, `trial_ends_at`, `grace_ends_at`, `current_period_end`, timestamps. Index `(user_id, status)`. Unique `provider_subscription_id` when present.
+`entitlements`: `user_id`, `features` (the lookup-key map), `source` (`stripe` or `seed`), `synced_at`. Unique `user_id`. Rebuilt from `entitlements.active_entitlement_summary.updated`. A `has_more` payload is fetched in full before the row is replaced.
+
+`subscriptions`: `user_id`, `plan_code`, `status`, `provider` (`stripe`, `btcpay`, or `nowpayments`), `renewal_mode` (`auto` or `manual`), `provider_customer_id`, `provider_subscription_id`, `trial_ends_at`, `grace_ends_at`, `current_period_end`, timestamps. Index `(user_id, status)`. Unique sparse `provider_subscription_id`.
 
 `payment_events`: `provider`, `provider_event_id` (unique), `type`, `payload` (provider body, no card data), `processed_at`. Idempotency is the unique event id.
 
@@ -526,7 +531,7 @@ Skeleton: `GET /api/v1/plans` returns the three seed plans with null prices. `GE
 | `modules/publication_module.py` | `fan_out(log_row, entitlements) -> rows`. Entitlements are an argument |
 | `models/publication_model.py` | `Publication` |
 
-`publications`: `signal_log_id`, `user_id`, `plan_code`, `visible_at`, `status` (`scheduled`, `released`, `suppressed`), timestamps. Unique `(signal_log_id, user_id)`. Index `(user_id, visible_at, status)`.
+`publications`: `signal_log_id`, `user_id`, `plan_code`, `release_at` (`created_at` of the log plus `signals.delay_seconds`), `status` (`scheduled`, `released`, `suppressed`), timestamps. Unique `(signal_log_id, user_id)`. Index `(user_id, release_at, status)`. Fan-out writes `release_at`. List and feed queries require `release_at <= now` for that caller. Owner delay is 0.
 
 Skeleton: empty page.
 
@@ -542,7 +547,7 @@ Skeleton: empty page.
 | `models/signal_log_model.py` | `SignalLog` |
 | `models/outcome_model.py` | `Outcome` |
 
-`signal_logs`: `seq` (unique), `signal_id`, `payload`, `payload_hash`, `prev_hash`, `corrects_seq` (null), `logged_at`. Index `(logged_at)`.
+`signal_logs`: `seq` (unique), `signal_id`, `candle_close_time` (confirming bar, not the swing pivot), `strategy_version`, `payload` (canonical JSON, including inputs and `ohlcv_hash`), `prev_hash`, `chain_hash` (SHA-256 of `prev_hash` plus the canonical payload), `corrects_seq`, `logged_at`. Index `(logged_at)` and `(candle_close_time)`. The writer role is insert and find only.
 
 `outcomes`: `signal_log_id`, `status`, `r_multiple`, `closed_at`, `source` (`forward` or `backtest`). Unique `signal_log_id`. Index `(source, closed_at)`.
 
@@ -594,3 +599,44 @@ Skeleton: empty page.
 `audit_logs`: `actor_id`, `action`, `target_type`, `target_id`, `meta`, `ip`, `created_at`. Index `(created_at)`, `(actor_id, created_at)`, `(action, created_at)`.
 
 Skeleton: empty page. `Core/rate_limit.py` is the rate-limit seam and is not enforced.
+
+### Webhooks
+
+Signed outbound delivery to a bot the subscriber already runs. v1 does not store their exchange key. Research name "Notifications" stays `Alerts`. This folder is only the signed POST.
+
+| File | Responsibility |
+| --- | --- |
+| `routes/webhook_endpoint_route.py` | `GET /api/v1/webhooks/endpoints`. `POST` is specified and not mounted |
+| `middlewares/webhook_middleware.py` | URL must be HTTPS. Secret is write-only |
+| `controllers/webhook_controller.py` | List endpoints. Never returns the secret |
+| `modules/webhook_module.py` | Sign, POST, retry, dead-letter. Payload templates for 3Commas, WunderTrading, Cornix, and Altrady |
+| `models/webhook_endpoint_model.py` | `WebhookEndpoint` |
+| `models/webhook_delivery_model.py` | `WebhookDelivery` |
+
+`webhook_endpoints`: `user_id`, `url`, `secret_hash`, `format` (`generic`, `3commas`, `wundertrading`, `cornix`, `altrady`), `enabled`, timestamps. Index `(user_id, enabled)`.
+
+`webhook_deliveries`: `endpoint_id`, `publication_id`, `idempotency_key` (unique), `status` (`pending`, `delivered`, `failed`), `attempts`, `next_attempt_at`, `last_error`, timestamps. A delivery is not created before `release_at`.
+
+Skeleton: the list route is an empty page.
+
+### Compliance
+
+Product rules shaped around the general-advice exemption. Not a legal opinion and not a registration.
+
+| File | Responsibility |
+| --- | --- |
+| `routes/compliance_route.py` | `GET /api/v1/compliance/gate` |
+| `middlewares/compliance_middleware.py` | Consent body, when signup exists: disclosure version id |
+| `controllers/compliance_controller.py` | Gate payload. Geo check is a function the publication controller will call |
+| `modules/compliance_module.py` | `futures_allowed(country) -> bool`. Canada returns false until counsel says otherwise |
+| `models/consent_model.py` | `Consent` |
+| `models/disclosure_model.py` | `Disclosure` |
+| `models/geo_rule_model.py` | `GeoRule` |
+
+`consents`: `user_id`, `document` (`tos`, `risk`, `conflicts`), `version`, `accepted_at`. Index `(user_id, document, version)`.
+
+`disclosures`: `kind` (`conflict` or `risk`), `version`, `body`, `active`. The active conflict disclosure id is copied onto the public signal payload.
+
+`geo_rules`: `country` (`CA`), `market` (`futures`), `action` (`withhold`), `reason`. Index `(country, market)`.
+
+`GET /api/v1/compliance/gate` returns `legal_advice: false`, `lawyer_review_required: true`, the notice names, and the open question about per-user sizing. It does not require an API key, so the status is visible. The skeleton does not decide the legal question.

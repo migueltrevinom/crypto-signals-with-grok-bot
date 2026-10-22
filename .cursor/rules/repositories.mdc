@@ -18,6 +18,8 @@ Use the repository layout under `Repositories/` and the shared helpers in `Core/
 - Symbol mapping is `concat`, `dash`, or `alias` on the exchange source. Do not port the OKX `symbol[:-4] + "-USDT"` slice.
 - The product is multi-tenant from the model onward. Miguel is the `owner` while `PUBLIC_SIGNUP` is false. Do not add a second, public-only schema later. See `docs/saas.md`.
 - Do not edit or delete `signal_logs` rows. Outcomes are a different collection. Do not publish a signal before its `visible_at`.
-- Do not enable public signup or live payments. That is blocked on a legal review this repo does not provide.
+- Do not enable public signup or live payments. The gate is CSA Staff Notice 31-369 and NI 31-103 s. 8.25, and this repo does not answer it. See `docs/saas.md` and `Repositories/Compliance`.
+- v1 does not store user exchange keys. Subscriber execution is a signed webhook. `release_at` is enforced when a publication is written and again on every read.
+- Do not stamp a swing on its pivot bar. Stamp the confirming close. Do not update `signal_logs`.
 - Do not store raw user API keys, refresh tokens, card numbers, or exchange secrets. Store hashes or ciphertext.
 - The detection oracle is `prototype/`. Port mode and block math as it stands. Resolved product rules (SMA, ladder, confluence, risk) sit on top and are specified in `docs/strategy-spec.md`. Remaining open questions are at the bottom of that file.

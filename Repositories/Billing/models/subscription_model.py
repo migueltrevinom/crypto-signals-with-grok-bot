@@ -23,7 +23,8 @@ class Subscription(Document):
         "canceled",
         "incomplete",
     ] = "incomplete"
-    provider: Literal["stripe", "crypto"] = "stripe"
+    provider: Literal["stripe", "btcpay", "nowpayments"] = "stripe"
+    renewal_mode: Literal["auto", "manual"] = "auto"
     provider_customer_id: str | None = None
     provider_subscription_id: str | None = None
     trial_ends_at: datetime | None = None

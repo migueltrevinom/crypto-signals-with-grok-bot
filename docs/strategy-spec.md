@@ -114,7 +114,7 @@ A plan expires when a newer closed bar on the entry timeframe no longer holds th
 
 ### Trend context
 
-A swing high (low) is an extreme versus `swing_lookback` bars on each side (default 5), confirmed that many bars later. Trend at bar `i` uses the last two confirmed swing highs and lows: up when both are rising, down when both are falling, otherwise range. A close through the last swing extreme overrides that to `up (structure break)` or `down (structure break)`. With fewer than two swings on either side the trend is `unknown`.
+A swing high (low) is an extreme versus `swing_lookback` bars on each side (default 5), confirmed that many bars later. The signal's `candle_close_time` is that confirming bar. The pivot bar is stored as context and is not the time the signal is credited or published. Trend at bar `i` uses the last two confirmed swing highs and lows: up when both are rising, down when both are falling, otherwise range. A close through the last swing extreme overrides that to `up (structure break)` or `down (structure break)`. With fewer than two swings on either side the trend is `unknown`.
 
 Trend is stored on the signal. It does not accept or reject a mode in the prototype. Counter-trend anchors are allowed, which matches the notes (a 5-bar swing can anchor a mode against the main bias).
 

@@ -28,6 +28,7 @@ EMPTY_PAGES = [
     "/api/v1/paper/accounts",
     "/api/v1/exchange-accounts",
     "/api/v1/audit-logs",
+    "/api/v1/webhooks/endpoints",
 ]
 
 
@@ -146,10 +147,24 @@ def test_signup_stays_closed_and_plans_have_no_price() -> None:
     plans = client.get("/api/v1/plans")
     assert plans.status_code == 200
     codes = [row["code"] for row in plans.json()["data"]]
-    assert codes == ["free", "starter", "pro"]
+    assert codes == ["free", "starter", "pro", "arbitrage"]
     assert all(row["price_cents"] is None for row in plans.json()["data"])
-    assert plans.json()["data"][0]["entitlements"]["signal_delay_seconds"] == 3600
-    assert plans.json()["data"][2]["entitlements"]["signal_delay_seconds"] == 0
+    free = plans.json()["data"][0]["entitlements"]
+    assert free["signals.delay_seconds"] == 14400
+    assert free["signals.symbols"] == ["BTCUSDT", "ETHUSDT"]
+    assert plans.json()["data"][2]["entitlements"]["signals.delay_seconds"] == 0
+    assert plans.json()["data"][3]["kind"] == "addon"
+    assert plans.json()["data"][3]["entitlements"]["arbitrage.enabled"] is True
+
+
+def test_compliance_gate_is_not_legal_advice() -> None:
+    response = client.get("/api/v1/compliance/gate")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["legal_advice"] is False
+    assert data["lawyer_review_required"] is True
+    assert "NI 31-103 section 8.25" in data["references"]
+    assert "CSA/CIRO Staff Notice 31-369" in data["references"]
 
 
 def test_public_performance_needs_no_key_and_claims_no_record(

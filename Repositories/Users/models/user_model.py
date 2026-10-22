@@ -19,6 +19,7 @@ class User(Document):
     role: Literal["owner", "admin", "subscriber", "free"] = "free"
     status: Literal["active", "disabled"] = "active"
     email_verified: bool = False
+    country: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

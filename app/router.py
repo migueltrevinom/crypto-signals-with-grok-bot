@@ -14,6 +14,7 @@ from Repositories.Auth.routes.auth_route import router as auth_router
 from Repositories.Backtests.routes.backtest_route import router as backtest_router
 from Repositories.Billing.routes.plan_route import router as plan_router
 from Repositories.Billing.routes.subscription_route import router as subscription_router
+from Repositories.Compliance.routes.compliance_route import router as compliance_router
 from Repositories.Dexes.routes.dex_route import router as dex_router
 from Repositories.ExchangeAccounts.routes.exchange_account_route import (
     router as exchange_account_router,
@@ -36,6 +37,7 @@ from Repositories.Strategies.TimeMode.routes.timemode_route import router as tim
 from Repositories.Symbols.routes.symbol_route import router as symbol_router
 from Repositories.Users.routes.user_route import router as user_router
 from Repositories.Watchlists.routes.watchlist_route import router as watchlist_router
+from Repositories.Webhooks.routes.webhook_endpoint_route import router as webhook_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(signal_router)
@@ -66,6 +68,8 @@ api_router.include_router(public_performance_router)
 api_router.include_router(paper_router)
 api_router.include_router(exchange_account_router)
 api_router.include_router(audit_router)
+api_router.include_router(compliance_router)
+api_router.include_router(webhook_router)
 
 
 @api_router.get(

@@ -16,7 +16,7 @@ class Publication(Document):
     signal_log_id: PydanticObjectId
     user_id: PydanticObjectId
     plan_code: str
-    visible_at: datetime
+    release_at: datetime
     status: Literal["scheduled", "released", "suppressed"] = "scheduled"
     created_at: datetime = Field(default_factory=_utcnow)
 
@@ -31,9 +31,9 @@ class Publication(Document):
             IndexModel(
                 [
                     ("user_id", ASCENDING),
-                    ("visible_at", ASCENDING),
+                    ("release_at", ASCENDING),
                     ("status", ASCENDING),
                 ],
-                name="user_visible",
+                name="user_release",
             ),
         ]

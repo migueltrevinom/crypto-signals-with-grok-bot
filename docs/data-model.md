@@ -291,7 +291,9 @@ Full fields and indexes are in [repositories.md](repositories.md). Names:
 | `positions`, `position_events` | Positions |
 | `arbitrage_opportunities`, `venue_quotes` | Arbitrage |
 | `api_keys`, `refresh_tokens` | Auth |
-| `plans`, `subscriptions`, `payment_events` | Billing |
+| `plans`, `entitlements`, `subscriptions`, `payment_events` | Billing |
+| `webhook_endpoints`, `webhook_deliveries` | Webhooks |
+| `consents`, `disclosures`, `geo_rules` | Compliance |
 | `publications` | Publications |
 | `signal_logs`, `outcomes` | Performance |
 | `paper_accounts`, `paper_fills` | PaperTrading |

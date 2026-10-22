@@ -15,9 +15,11 @@ def _utcnow() -> datetime:
 class SignalLog(Document):
     seq: Indexed(int, unique=True)
     signal_id: str
+    candle_close_time: datetime
+    strategy_version: str
     payload: dict[str, Any]
-    payload_hash: str
     prev_hash: str
+    chain_hash: str
     corrects_seq: int | None = None
     logged_at: datetime = Field(default_factory=_utcnow)
 
@@ -25,4 +27,5 @@ class SignalLog(Document):
         name = "signal_logs"
         indexes = [
             IndexModel([("logged_at", ASCENDING)], name="logged_at"),
+            IndexModel([("candle_close_time", ASCENDING)], name="candle_close"),
         ]
