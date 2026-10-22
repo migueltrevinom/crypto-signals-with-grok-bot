@@ -346,5 +346,15 @@ The contract for each route is in [repositories.md](repositories.md). Short form
 | GET | `/api/v1/position-events` | Empty page |
 | GET | `/api/v1/entry-plans` | Empty page |
 | GET | `/api/v1/arbitrage/opportunities` | Empty page |
+| GET | `/api/v1/auth/config` | Signup closed, single-tenant. No API key required |
+| GET | `/api/v1/api-keys` | Empty page |
+| GET | `/api/v1/plans` | Free, starter, and pro seeds. `price_cents` is null |
+| GET | `/api/v1/subscriptions` | Empty page |
+| GET | `/api/v1/publications` | Empty page |
+| GET | `/api/v1/performance/track-record` | Disclaimer and zero trades |
+| GET | `/api/v1/public/performance` | Same payload, no API key |
+| GET | `/api/v1/paper/accounts` | Empty page |
+| GET | `/api/v1/exchange-accounts` | Empty page. Keys are not accepted |
+| GET | `/api/v1/audit-logs` | Empty page |
 
 `POST`, `PUT`, `PATCH`, and `DELETE` are specified above and are not mounted yet. Calling them is 404. There is no order endpoint.

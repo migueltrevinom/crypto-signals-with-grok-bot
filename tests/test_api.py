@@ -22,6 +22,12 @@ EMPTY_PAGES = [
     "/api/v1/position-events",
     "/api/v1/entry-plans",
     "/api/v1/arbitrage/opportunities",
+    "/api/v1/api-keys",
+    "/api/v1/subscriptions",
+    "/api/v1/publications",
+    "/api/v1/paper/accounts",
+    "/api/v1/exchange-accounts",
+    "/api/v1/audit-logs",
 ]
 
 
@@ -132,6 +138,36 @@ def test_arbitrage_settings_do_not_place_orders() -> None:
     assert response.json()["data"]["value"]["place_orders"] is False
 
 
+def test_signup_stays_closed_and_plans_have_no_price() -> None:
+    config = client.get("/api/v1/auth/config")
+    assert config.status_code == 200
+    assert config.json()["data"]["public_signup"] is False
+    assert config.json()["data"]["mode"] == "single_tenant"
+    plans = client.get("/api/v1/plans")
+    assert plans.status_code == 200
+    codes = [row["code"] for row in plans.json()["data"]]
+    assert codes == ["free", "starter", "pro"]
+    assert all(row["price_cents"] is None for row in plans.json()["data"])
+    assert plans.json()["data"][0]["entitlements"]["signal_delay_seconds"] == 3600
+    assert plans.json()["data"][2]["entitlements"]["signal_delay_seconds"] == 0
+
+
+def test_public_performance_needs_no_key_and_claims_no_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("API_KEY", "secret-value")
+    get_settings.cache_clear()
+    response = client.get("/api/v1/public/performance")
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["trades"] == 0
+    assert body["sample"] == "forward"
+    assert "Not investment advice" in body["disclaimer"]
+    private = client.get("/api/v1/performance/track-record")
+    assert private.status_code == 401
+
+
 def test_models_include_positions_and_arbitrage() -> None:
     with TestClient(app):
         names = {model.Settings.name for model in app.state.document_models}
@@ -141,6 +177,10 @@ def test_models_include_positions_and_arbitrage() -> None:
     assert "positions" in names
     assert "arbitrage_opportunities" in names
     assert "confluence_configs" in names
+    assert "plans" in names
+    assert "signal_logs" in names
+    assert "publications" in names
+    assert "audit_logs" in names
 
 
 def test_production_requires_a_configured_key(monkeypatch: pytest.MonkeyPatch) -> None:

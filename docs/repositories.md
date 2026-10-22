@@ -8,7 +8,14 @@ Runtime numbers Miguel has already decided (the ladder, the 6h SMA, confluence w
 
 | Domain | Collections | What it owns |
 | --- | --- | --- |
-| `Users` | `users` | The account risk profiles and alerts attach to |
+| `Users` | `users` | Accounts and roles (`owner`, `admin`, `subscriber`, `free`) |
+| `Auth` | `api_keys`, `refresh_tokens` | Signup flag, JWT, API keys |
+| `Billing` | `plans`, `subscriptions`, `payment_events` | Tiers, entitlements, Stripe, crypto later |
+| `Publications` | `publications` | Per-subscriber release of a signal, with delay |
+| `Performance` | `signal_logs`, `outcomes` | Append-only log and measured results |
+| `PaperTrading` | `paper_accounts`, `paper_fills` | Simulated track record |
+| `ExchangeAccounts` | `exchange_accounts` | Later, encrypted trade-only keys |
+| `Audit` | `audit_logs` | Security and billing audit trail |
 | `Symbols` | `symbols` | Every pair to monitor, any quote, per venue |
 | `Settings` | `app_settings` | Ladder, scanner, arbitrage settings |
 | `Exchanges` | `exchange_sources` | CEX connectors, native intervals, symbol style |
@@ -57,19 +64,21 @@ Arbitrage is a second pass in the same worker tick: Exchanges and Dexes return q
 
 ## Users
 
-Account that owns risk profiles and is the principal on alerts. Auth stays one `X-API-Key` for now. The key maps to the seeded user (`app_settings` key `auth.default_user_id`) until per-user keys exist.
+Accounts. Login and keys are the Auth domain. Product rules are in [saas.md](saas.md).
 
 | File | Responsibility |
 | --- | --- |
-| `routes/user_route.py` | `GET /api/v1/users`, `GET /api/v1/users/{id}`, `POST`, `PATCH` |
-| `middlewares/user_middleware.py` | Body: `name`, optional `email`, `status` |
-| `controllers/user_controller.py` | Calls the module. List envelope |
-| `modules/user_module.py` | CRUD through `build_query` and `User.save` |
+| `routes/user_route.py` | `GET /api/v1/users`, `GET /api/v1/users/me`, `GET /api/v1/users/{id}`, `PATCH /api/v1/users/{id}` |
+| `middlewares/user_middleware.py` | Patch body: `name`, `status`. Role changes are owner-only and audited |
+| `controllers/user_controller.py` | List and profile |
+| `modules/user_module.py` | CRUD through `build_query`. Does not issue tokens |
 | `models/user_model.py` | `User` |
 
-`users`: `name`, `email` (optional), `status` (`active` or `disabled`), `created_at`, `updated_at`. Index: unique `email` when present (sparse).
+`users`: `email` (unique, sparse), `name`, `password_hash` (null until signup exists; never returned), `role` (`owner`, `admin`, `subscriber`, `free`), `status` (`active`, `disabled`), `email_verified`, `created_at`, `updated_at`. Indexes: unique sparse `email`, `(role, status)`.
 
-Skeleton: `GET /api/v1/users` is an empty page. No person record is invented here.
+The first seeded account is `role: owner`. Public signup creates `free`. `subscriber` is set by Billing when a subscription is `trialing` or `active`, and returns to `free` when it ends. Staff roles are not for sale.
+
+Skeleton: `GET /api/v1/users` is an empty page. No person is invented.
 
 ## Symbols
 
@@ -457,3 +466,131 @@ net_spread_bps = gross_spread_bps - buy_fee_bps - sell_fee_bps - slippage_bps - 
 The worker loads settings, asks the Exchanges module and the Dexes module for quotes (those calls happen in the worker, not in the Arbitrage module), then calls `net_opportunity`. A kept row is also an alert with `subject_type: arbitrage_opportunity`.
 
 Skeleton: `GET /api/v1/arbitrage/opportunities` is an empty page. The model is registered. No quote code runs.
+
+## Multi-tenant domains
+
+Behavior is in [saas.md](saas.md). These folders are placeholders. They do not take payment, issue a JWT, or encrypt a customer key.
+
+### Auth
+
+| File | Responsibility |
+| --- | --- |
+| `routes/auth_route.py` | `GET /api/v1/auth/config`. Later: `POST /auth/signup`, `/login`, `/refresh`, `/logout` |
+| `routes/api_key_route.py` | `GET/POST /api/v1/api-keys`, `DELETE /api/v1/api-keys/{id}` |
+| `middlewares/auth_middleware.py` | Signup and login bodies. `require_role` for owner and admin routes |
+| `controllers/auth_controller.py` | Config now. Tokens later |
+| `controllers/api_key_controller.py` | List and create. Returns the raw key once |
+| `modules/auth_module.py` | Password check, token issue, signup gate |
+| `modules/api_key_module.py` | Store the hash only |
+| `models/api_key_model.py` | `ApiKey` |
+| `models/refresh_token_model.py` | `RefreshToken` |
+
+`api_keys`: `user_id`, `prefix` (`cs_live`), `last4`, `key_hash`, `scopes`, `expires_at`, `revoked_at`, timestamps. Unique `key_hash`. Index `(user_id, revoked_at)`.
+
+`refresh_tokens`: `user_id`, `token_hash`, `expires_at`, `revoked_at`, `replaced_by`. Unique `token_hash`. Index `(user_id, expires_at)`.
+
+The deployment `API_KEY` is not a row here.
+
+Skeleton: `GET /api/v1/auth/config` returns `public_signup: false`. API key list is an empty page.
+
+### Billing
+
+| File | Responsibility |
+| --- | --- |
+| `routes/plan_route.py` | `GET /api/v1/plans` |
+| `routes/subscription_route.py` | `GET /api/v1/subscriptions`, `GET /api/v1/subscriptions/me` |
+| `routes/billing_webhook_route.py` | `POST /api/v1/billing/webhooks/stripe` and, later, `/crypto`. Not mounted |
+| `middlewares/billing_middleware.py` | Webhook raw body is not parsed as JSON before signature check |
+| `controllers/billing_controller.py` | Plans, subscriptions, webhook ack |
+| `modules/billing_module.py` | State machine. Calls a provider. Does not import Auth |
+| `modules/providers.py` | `PaymentProvider` protocol, `StripeProvider`, `CryptoProvider` |
+| `models/plan_model.py` | `Plan` |
+| `models/subscription_model.py` | `Subscription` |
+| `models/payment_event_model.py` | `PaymentEvent` |
+
+`plans`: `code` (unique), `name`, `public`, `currency`, `interval`, `price_cents` (null until set), `trial_days`, `grace_days`, `entitlements`, timestamps.
+
+`subscriptions`: `user_id`, `plan_code`, `status`, `provider` (`stripe` or `crypto`), `provider_customer_id`, `provider_subscription_id`, `trial_ends_at`, `grace_ends_at`, `current_period_end`, timestamps. Index `(user_id, status)`. Unique `provider_subscription_id` when present.
+
+`payment_events`: `provider`, `provider_event_id` (unique), `type`, `payload` (provider body, no card data), `processed_at`. Idempotency is the unique event id.
+
+Skeleton: `GET /api/v1/plans` returns the three seed plans with null prices. `GET /api/v1/subscriptions` is an empty page. Providers raise `NotImplementedError`.
+
+### Publications
+
+| File | Responsibility |
+| --- | --- |
+| `routes/publication_route.py` | `GET /api/v1/publications` |
+| `middlewares/publication_middleware.py` | Filters: `status`, `symbol` |
+| `controllers/publication_controller.py` | List. Forces `user_id` from the caller once auth is real. The skeleton has no caller |
+| `modules/publication_module.py` | `fan_out(log_row, entitlements) -> rows`. Entitlements are an argument |
+| `models/publication_model.py` | `Publication` |
+
+`publications`: `signal_log_id`, `user_id`, `plan_code`, `visible_at`, `status` (`scheduled`, `released`, `suppressed`), timestamps. Unique `(signal_log_id, user_id)`. Index `(user_id, visible_at, status)`.
+
+Skeleton: empty page.
+
+### Performance
+
+| File | Responsibility |
+| --- | --- |
+| `routes/performance_route.py` | `GET /api/v1/performance/track-record` (authenticated) |
+| `routes/public_performance_route.py` | `GET /api/v1/public/performance` (no API key) |
+| `middlewares/performance_middleware.py` | Query: `sample` of `forward` or `backtest` |
+| `controllers/performance_controller.py` | Aggregates. Does not write the log |
+| `modules/performance_module.py` | Append log, chain hash, record outcome. Append is insert-only |
+| `models/signal_log_model.py` | `SignalLog` |
+| `models/outcome_model.py` | `Outcome` |
+
+`signal_logs`: `seq` (unique), `signal_id`, `payload`, `payload_hash`, `prev_hash`, `corrects_seq` (null), `logged_at`. Index `(logged_at)`.
+
+`outcomes`: `signal_log_id`, `status`, `r_multiple`, `closed_at`, `source` (`forward` or `backtest`). Unique `signal_log_id`. Index `(source, closed_at)`.
+
+Skeleton: both GETs return the disclaimer, `sample: forward`, and empty stats (`trades: 0`). The public route does not require a key.
+
+### Paper trading
+
+| File | Responsibility |
+| --- | --- |
+| `routes/paper_route.py` | `GET /api/v1/paper/accounts` |
+| `middlewares/paper_middleware.py` | None beyond auth, until create exists |
+| `controllers/paper_controller.py` | List |
+| `modules/paper_module.py` | `simulate(plan, profile, costs) -> fill`. Pure given those inputs |
+| `models/paper_account_model.py` | `PaperAccount` |
+| `models/paper_fill_model.py` | `PaperFill` |
+
+`paper_accounts`: `kind` (`house` or `personal`), `owner_user_id` (null for house), `forward_started_at`, `fee_bps`, `slippage_bps`, timestamps. One house row. Index `(kind, owner_user_id)`.
+
+`paper_fills`: `account_id`, `signal_log_id`, `side`, `fill_price`, `fee_quote`, `slippage_bps`, `opened_at`, `closed_at`, `r_multiple`. Unique `(account_id, signal_log_id)`.
+
+Skeleton: empty page. No house account is inserted.
+
+### Exchange accounts
+
+Later. Execution stays off.
+
+| File | Responsibility |
+| --- | --- |
+| `routes/exchange_account_route.py` | `GET /api/v1/exchange-accounts`. `POST` is not mounted |
+| `middlewares/exchange_account_middleware.py` | Body, when it exists, rejects a payload that includes a withdrawal-enabled key |
+| `controllers/exchange_account_controller.py` | List. Never returns ciphertext |
+| `modules/exchange_account_module.py` | Encrypt and decrypt with `SECRETS_KEY`. Not called yet |
+| `models/exchange_account_model.py` | `ExchangeAccount` |
+
+`exchange_accounts`: `user_id`, `venue`, `ciphertext`, `nonce`, `key_id`, `withdrawal_enabled`, `status` (`disabled` until the phase), timestamps. Index `(user_id, venue)`.
+
+Skeleton: empty page.
+
+### Audit
+
+| File | Responsibility |
+| --- | --- |
+| `routes/audit_route.py` | `GET /api/v1/audit-logs` (owner and admin) |
+| `middlewares/audit_middleware.py` | Filters: `action`, `actor_id`, time range |
+| `controllers/audit_controller.py` | List |
+| `modules/audit_module.py` | `record(action, actor, target, meta)`. Insert only |
+| `models/audit_log_model.py` | `AuditLog` |
+
+`audit_logs`: `actor_id`, `action`, `target_type`, `target_id`, `meta`, `ip`, `created_at`. Index `(created_at)`, `(actor_id, created_at)`, `(action, created_at)`.
+
+Skeleton: empty page. `Core/rate_limit.py` is the rate-limit seam and is not enforced.

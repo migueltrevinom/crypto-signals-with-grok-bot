@@ -1,4 +1,4 @@
-"""Account that owns risk profiles. Auth is still one API key."""
+"""Account. Roles and password hashes are stored here. Tokens are not."""
 
 from datetime import UTC, datetime
 from typing import Literal
@@ -15,7 +15,10 @@ def _utcnow() -> datetime:
 class User(Document):
     name: str
     email: str | None = None
+    password_hash: str | None = None
+    role: Literal["owner", "admin", "subscriber", "free"] = "free"
     status: Literal["active", "disabled"] = "active"
+    email_verified: bool = False
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -23,4 +26,5 @@ class User(Document):
         name = "users"
         indexes = [
             IndexModel([("email", ASCENDING)], unique=True, sparse=True, name="email"),
+            IndexModel([("role", ASCENDING), ("status", ASCENDING)], name="role_status"),
         ]

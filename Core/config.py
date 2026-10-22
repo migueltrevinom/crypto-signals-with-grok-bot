@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     mongodb_url: str = "mongodb://localhost:27017"
     mongodb_db: str = "crypto_signals"
     scan_interval_seconds: int = 900
+    public_signup: bool = False
+    jwt_secret: str = ""
+    secrets_key: str = ""
 
     @property
     def api_key_required(self) -> bool:

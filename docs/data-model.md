@@ -290,6 +290,15 @@ Full fields and indexes are in [repositories.md](repositories.md). Names:
 | `risk_profiles` | Risk |
 | `positions`, `position_events` | Positions |
 | `arbitrage_opportunities`, `venue_quotes` | Arbitrage |
+| `api_keys`, `refresh_tokens` | Auth |
+| `plans`, `subscriptions`, `payment_events` | Billing |
+| `publications` | Publications |
+| `signal_logs`, `outcomes` | Performance |
+| `paper_accounts`, `paper_fills` | PaperTrading |
+| `exchange_accounts` | ExchangeAccounts |
+| `audit_logs` | Audit |
+
+Tenancy, delays, the hash chain, and the legal gate are specified in [saas.md](saas.md). Field lists for these collections are in [repositories.md](repositories.md).
 
 `positions` cover spot and futures. There is no separate futures collection. `size_base` is null when the risk profile has no equity yet. Arbitrage rows store net spread and do not store an order id.
 

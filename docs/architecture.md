@@ -167,7 +167,14 @@ The per-domain files, endpoints, fields, and indexes are in [repositories.md](re
 
 | Domain | Responsibility | Collections |
 | --- | --- | --- |
-| `Users` | Account for risk and alerts | `users` |
+| `Users` | Accounts and roles | `users` |
+| `Auth` | Signup flag, JWT, user API keys | `api_keys`, `refresh_tokens` |
+| `Billing` | Plans, subscriptions, payment events | `plans`, `subscriptions`, `payment_events` |
+| `Publications` | Delayed per-user release of a signal | `publications` |
+| `Performance` | Append-only log and outcomes | `signal_logs`, `outcomes` |
+| `PaperTrading` | House and personal simulation | `paper_accounts`, `paper_fills` |
+| `ExchangeAccounts` | Later, encrypted trade-only keys | `exchange_accounts` |
+| `Audit` | Append-only security and billing trail | `audit_logs` |
 | `Symbols` | All pairs to monitor, any quote, per venue | `symbols` |
 | `Settings` | Ladder, scanner, symbol prefs, arbitrage settings | `app_settings` |
 | `Exchanges` | CEX klines, native intervals, symbol style, fees | `exchange_sources` |
@@ -187,9 +194,11 @@ There is no `Scanner` domain and no separate futures domain. Futures is a `marke
 
 ## Alert delivery
 
-The first channel is `grok_chat`. The worker inserts an alert with `status: pending`. The bot polls `GET /api/v1/alerts/feed` and posts `delivered` or `acked`. `GrokChatNotifier` does not push.
+Generation and publication are separate. The worker writes `signal_logs` at detection time. `Publications` fans that row out per user with `visible_at` set from the plan's `signal_delay_seconds`. Alerts are created from publications, not from the raw signal, once that phase exists. Until then the Grok Bot feed is the owner view.
 
-`WebhookNotifier` and `EmailNotifier` are the same protocol and are not implemented. Their config is secret, masked on list responses, and never logged. Adding a channel is a new class and a new `kind`.
+The first channel is `grok_chat`. The bot polls `GET /api/v1/alerts/feed` and posts `delivered` or `acked`. `GrokChatNotifier` does not push. Webhook, email, Telegram, and Discord are later kinds. A plan's `channels` list is what a subscriber may enable.
+
+Product rules, the legal gate, and the four launch stages are in [saas.md](saas.md).
 
 ## Configuration and prototype bridge
 

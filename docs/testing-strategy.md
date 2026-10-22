@@ -68,6 +68,7 @@ The chart fixture suite is the first backtest. Summary counts must equal the pur
 - Confluence tests lock the seed weights: a conflicting weekly and daily score is penalized, a failed 6h SMA zeros the score, and no plan uses a 1h entry.
 - Risk tests lock the size formula, including a null equity leaving `size_base` null.
 - Alert tests lock `pending → delivered → acked` on the feed.
+- Signup stays closed in tests. Plan prices stay null. The public performance route returns zero trades and does not require a key. The private track record does.
 - Do not snapshot the entire FastAPI OpenAPI schema in phase 0. It will churn as routes are filled in.
 - Do not require the prototype's live `validate.py` in CI. Historical exchange responses can move by a bar revision; fixtures will not.
 

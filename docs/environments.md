@@ -32,6 +32,10 @@ The same code runs in every environment. The environment variables in `.env.exam
 | `MONGODB_URL` | local Mongo | staging cluster | production cluster |
 | `MONGODB_DB` | `crypto_signals` | `crypto_signals` | `crypto_signals` |
 | `SCAN_INTERVAL_SECONDS` | `900` (or shorter while testing) | `900` | `900` |
+| `PUBLIC_SIGNUP` | `false` | `false` | `false` until the legal gate |
+| `JWT_SECRET` | any long random string when login exists | required when login exists | required when login exists |
+| `SECRETS_KEY` | unset | unset | unset until exchange-account encryption exists |
+| Stripe | unset | test mode in the private beta | live only after the legal gate |
 
 Each environment has its own database. Do not point staging at the production URL. The API key is a different secret in each environment. Exchange market-data calls in v1 use public klines and need no key; if a private key is added later it is an environment secret, not a row in git.
 

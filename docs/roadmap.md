@@ -71,12 +71,24 @@ Implement the two notifier classes. Mask secrets. This is after the Grok Bot fee
 
 A separate client. It reads the feed, the position list, and the settings. It is not a repository domain. CORS is decided here.
 
+## Product stages
+
+The phases above are the personal-use build. Signup stays closed through them. The product stages are in [saas.md](saas.md):
+
+1. Personal use. Phases 1 through 6, plus the house paper account and the append-only `signal_logs` write (can land with phase 5).
+2. Paper track record. Forward fills only after `forward_started_at`. The public page stays off.
+3. Private beta. Invites, Stripe test mode, entitlements and delays enforced.
+4. Public paid launch. Blocked until a lawyer has answered the Alberta securities question. This repo does not give that answer. Then `PUBLIC_SIGNUP=true` and live payments.
+
+Telegram and Discord are channel kinds in stage 4 or after, not before the feed and webhooks work. Exchange-account auto-execution is after the public launch, and still optional. It is not required to sell signals.
+
 ## Out of scope
 
-- Submitting orders or swaps.
+- Submitting orders or swaps in the current phases.
 - R.E.Signal V3.3.
-- Verifik-style multi-tenant client ids.
-- A message bus. The bot polls.
+- Copying verifik's `clientId` onto every query. Tenancy is users, plans, and publications.
+- A message bus. Clients poll.
+- Taking payment from the public before the legal gate.
 
 ## Suggested PR slicing
 

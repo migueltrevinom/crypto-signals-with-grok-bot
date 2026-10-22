@@ -16,4 +16,8 @@ Use the repository layout under `Repositories/` and the shared helpers in `Core/
 - Alerts for the Grok Bot are rows the bot polls at `GET /api/v1/alerts/feed`. Do not push chat from the worker. Webhook and email notifiers stay unwired until their phase.
 - The 6h SMA and the ladder `4h, 6h, 8h, 1d, 3d, 1w, 1M` come from Mongo settings (`Core/planning_seeds.py` until the seed is inserted). Do not bring back `ltf_map` or an entry-timeframe SMA.
 - Symbol mapping is `concat`, `dash`, or `alias` on the exchange source. Do not port the OKX `symbol[:-4] + "-USDT"` slice.
+- The product is multi-tenant from the model onward. Miguel is the `owner` while `PUBLIC_SIGNUP` is false. Do not add a second, public-only schema later. See `docs/saas.md`.
+- Do not edit or delete `signal_logs` rows. Outcomes are a different collection. Do not publish a signal before its `visible_at`.
+- Do not enable public signup or live payments. That is blocked on a legal review this repo does not provide.
+- Do not store raw user API keys, refresh tokens, card numbers, or exchange secrets. Store hashes or ciphertext.
 - The detection oracle is `prototype/`. Port mode and block math as it stands. Resolved product rules (SMA, ladder, confluence, risk) sit on top and are specified in `docs/strategy-spec.md`. Remaining open questions are at the bottom of that file.

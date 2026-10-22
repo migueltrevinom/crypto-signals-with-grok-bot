@@ -157,6 +157,80 @@ RISK_SEED: dict[str, Any] = {
     "exit": {"rule": "two_lower_closes"},
 }
 
+TENANCY: dict[str, Any] = {
+    "mode": "single_tenant",
+    "public_signup": False,
+    "default_role_on_signup": "free",
+}
+
+DISCLAIMER = (
+    "Not investment advice. Simulated and historical results are not future results. "
+    "This text is a product disclaimer, not a legal opinion."
+)
+
+PLAN_SEEDS: list[dict[str, Any]] = [
+    {
+        "code": "free",
+        "name": "Free",
+        "public": True,
+        "currency": "cad",
+        "interval": "month",
+        "price_cents": None,
+        "trial_days": 0,
+        "grace_days": 0,
+        "entitlements": {
+            "symbol_limit": 3,
+            "timeframes": ["4h", "6h", "8h", "1d", "3d", "1w", "1M"],
+            "strategies": ["time_mode"],
+            "signal_delay_seconds": 3600,
+            "channels": ["grok_chat"],
+            "api_access": False,
+            "paper_trading": True,
+            "arbitrage": False,
+        },
+    },
+    {
+        "code": "starter",
+        "name": "Starter",
+        "public": True,
+        "currency": "cad",
+        "interval": "month",
+        "price_cents": None,
+        "trial_days": 7,
+        "grace_days": 3,
+        "entitlements": {
+            "symbol_limit": 10,
+            "timeframes": ["4h", "6h", "8h", "1d", "3d", "1w", "1M"],
+            "strategies": ["time_mode"],
+            "signal_delay_seconds": 900,
+            "channels": ["grok_chat", "email"],
+            "api_access": False,
+            "paper_trading": True,
+            "arbitrage": False,
+        },
+    },
+    {
+        "code": "pro",
+        "name": "Pro",
+        "public": True,
+        "currency": "cad",
+        "interval": "month",
+        "price_cents": None,
+        "trial_days": 7,
+        "grace_days": 3,
+        "entitlements": {
+            "symbol_limit": 50,
+            "timeframes": ["4h", "6h", "8h", "1d", "3d", "1w", "1M"],
+            "strategies": ["time_mode"],
+            "signal_delay_seconds": 0,
+            "channels": ["grok_chat", "email", "webhook"],
+            "api_access": True,
+            "paper_trading": True,
+            "arbitrage": False,
+        },
+    },
+]
+
 ARBITRAGE_SETTINGS: dict[str, Any] = {
     "persisted": False,
     "min_net_spread_bps": 0,

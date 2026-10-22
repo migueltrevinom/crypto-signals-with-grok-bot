@@ -36,7 +36,14 @@ Details, the verifik mapping, and the request flow are in [docs/architecture.md]
 app/                         FastAPI app, worker, document registry
 Core/                        config, database, mongo_orm, planning seeds
 Repositories/
-  Users/                     account risk profiles attach to
+  Users/                     accounts and roles
+  Auth/                      JWT, API keys, signup flag
+  Billing/                   plans, subscriptions, Stripe and crypto later
+  Publications/              per-tier signal release, with delay
+  Performance/               append-only signal log and outcomes
+  PaperTrading/              simulated track record
+  ExchangeAccounts/          later, encrypted trade-only keys
+  Audit/                     audit trail
   Symbols/                   every pair to monitor
   Settings/                  ladder, scanner, arbitrage settings
   Exchanges/                 CEX connectors and symbol style
@@ -66,7 +73,9 @@ Each active domain folder contains `controllers/`, `models/`, `modules/`, `route
 | [docs/data-model.md](docs/data-model.md) | Collections, fields, indexes |
 | [docs/api-spec.md](docs/api-spec.md) | Endpoints, including what the skeleton actually serves |
 | [docs/strategy-spec.md](docs/strategy-spec.md) | time@mode as implementable rules, the 18/23 baseline, open questions |
-| [docs/roadmap.md](docs/roadmap.md) | Phases from the scanner port through a later UI |
+| [docs/saas.md](docs/saas.md) | Multi-tenant product: auth, billing, publication, performance, legal gate |
+| [docs/competitive-analysis.md](docs/competitive-analysis.md) | Placeholder for competitor pricing and tiers |
+| [docs/roadmap.md](docs/roadmap.md) | Build phases, then personal use, paper record, beta, public launch |
 | [docs/environments.md](docs/environments.md) | `development` / `staging` / `production`, env vars |
 | [docs/coding-conventions.md](docs/coding-conventions.md) | How code is written in this tree |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What is tested now and after the port |
