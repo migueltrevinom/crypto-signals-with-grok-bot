@@ -10,17 +10,21 @@ Every active collection has `created_at` and `updated_at` (UTC). The API exposes
 
 Floats match the prototype (IEEE). That is enough for signal levels. It is not an accounting type. Position size, if it arrives with futures, should be reconsidered before money is calculated.
 
-## How `prototype/config.json` is split
+## How configuration is stored
 
-The prototype file mixes three things. They become three documents:
+Mongo holds the live settings. `prototype/config.json` is the detection oracle for rules Miguel has not replaced. It is not the ladder and it is not the symbol universe.
 
-| Prototype key | Lives on |
+| Concern | Collection |
 | --- | --- |
-| `params` | `strategy_configs.params` |
-| `symbols`, `timeframes` | `watchlists` (a default watchlist is seeded from these) |
-| `ltf_map`, `data_sources`, `history_bars`, `report_window_bars`, `state_retention_days` | `strategy_configs.scanner` |
+| Mode and block parameters | `strategy_configs.params` (`sma_filter_timeframe` is `6h`) |
+| Ladder, 6h SMA length, decision and entry timeframes | `app_settings` key `ladder` |
+| History window, report window, source order | `app_settings` key `scanner` and `strategy_configs.scanner` |
+| Pairs to monitor | `symbols` |
+| Stops, size, targets, exit rule | `risk_profiles` |
+| Confluence weights | `confluence_configs` |
+| Optional named subsets | `watchlists` (symbol ids only, no `ltf_map`) |
 
-A watchlist may override `timeframes` and, when its `ltf_map` is non-empty, the ladder. Scanner-wide defaults stay on the strategy document so two watchlists share one rule set.
+The old `ltf_map` (`1w→1d→6h→1h→15m`) is not stored. Field-level tables for the new collections are in [repositories.md](repositories.md). The sections below keep the detector collections and note what changed on the older ones.
 
 ## `signals`
 
@@ -114,7 +118,7 @@ Versioned parameter documents. The active one is `active: true` for a given `key
 | `version` | int | Starts at 1 |
 | `active` | bool | One active document per key |
 | `params` | object | The `params` object from the prototype config. See the strategy spec. |
-| `scanner` | object | `history_bars` (1000), `report_window_bars` (3), `data_sources`, `ltf_map`, `state_retention_days` (120) |
+| `scanner` | object | `history_bars` (1000), `report_window_bars` (3), `data_sources`, `state_retention_days` (120). No `ltf_map` |
 | `notes` | string | |
 
 Unique index: `(key, version)`.
@@ -141,7 +145,7 @@ Unique index: `(key, version)`.
 | `flip_requires_expansion` | true |
 | `expiry_after_flip` | false |
 | `block_min_bars_after` | 2 |
-| `sma_filter_timeframe` | `entry` |
+| `sma_filter_timeframe` | `6h` |
 | `exit_rule` | `two_lower_closes` |
 | `enable_shorts` | true |
 | `block_ttl_bars` | 30 |
@@ -149,36 +153,34 @@ Unique index: `(key, version)`.
 
 A value may be a per-timeframe object `{"default": ..., "1w": ...}`. `params_for` in the prototype resolves that. The port keeps the same resolution.
 
-Default `scanner.ltf_map`: `1w→1d`, `1d→6h`, `6h→1h`, `1h→15m`.
+`sma_filter_timeframe` inside `params` is `6h` on every new version. The ladder itself is `app_settings` key `ladder`: `4h`, `6h`, `8h`, `1d`, `3d`, `1w`, `1M`.
 
-Default `scanner.data_sources`, in order: `binance`, `binance_vision`, `bybit`, `okx`.
+Default `scanner.data_sources`, in order: `binance`, `binance_vision`, `bybit`, `okx`. Coinbase and Kraken are catalog rows with `enabled: false` until their connectors exist.
 
 ## `watchlists`
+
+Optional subsets of `symbols`. The scanner's default set is enabled symbol rows, with USDT preferred via settings, not via this collection.
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | string | |
-| `symbols` | array | `{symbol, exchange, market}`. `exchange` defaults to `binance`. `market` is `spot` or `futures`. |
-| `timeframes` | string array | Timeframes to scan for this list |
-| `ltf_map` | object | Empty means "use the strategy scanner map" |
+| `symbol_ids` | object id array | Rows in `symbols` |
 | `strategy_key` | string | `time_mode` |
-| `strategy_config_id` | object id or null | Null means the active config |
-| `alert_channel_ids` | object id array | Channels that receive this list's new signals |
 | `enabled` | bool | |
 
-Index: `(enabled)`.
-
-The seed watchlist uses the prototype symbols `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `ARBUSDT` and timeframes `1h`, `6h`, `1d`, `1w`. Validation of the charts also uses `ETHBTC`, `ARBBTC`, and `30m`. The watchlist API must accept those. Do not hard-code a USDT-only universe.
+Index: `(enabled)`. There is no `ltf_map` and no embedded timeframe list. The ladder is global.
 
 ## `candles`
 
 Optional cache. Exchanges are the source of truth. Phase 1 may scan without writing candles, the way the prototype does. Backtests are the reason to fill this collection.
 
-| Field | Type |
-| --- | --- |
-| `exchange`, `symbol`, `timeframe` | string |
-| `open_time`, `close_time` | datetime UTC |
-| `open`, `high`, `low`, `close`, `volume` | float |
+| Field | Type | Notes |
+| --- | --- | --- |
+| `exchange`, `symbol`, `timeframe` | string | |
+| `open_time`, `close_time` | datetime UTC | |
+| `open`, `high`, `low`, `close`, `volume` | float | |
+| `origin` | string | `native` or `resampled` |
+| `source_timeframe` | string or null | Set when `origin` is `resampled` |
 
 Unique index: `(exchange, symbol, timeframe, open_time)`.
 
@@ -190,15 +192,22 @@ The fallback chain. Seeded from the prototype order. Public klines, `auth: "none
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `name` | string | `binance`, `binance_vision`, `bybit`, `okx`. Unique. |
+| `name` | string | `binance`, `binance_vision`, `bybit`, `okx`, `coinbase`, `kraken`. Unique. |
 | `priority` | int | Lower runs first |
 | `kind` | string | `spot_klines` |
 | `base_url` | string | |
 | `market` | string | `spot` |
 | `enabled` | bool | |
 | `auth` | string | `none` or, later, `api_key` |
+| `symbol_style` | string | `concat`, `dash`, or `alias`. OKX is `dash` (`BTC-USDT`, `ETH-BTC`), never `symbol[:-4] + "-USDT"` |
+| `native_timeframes` | string array | Ladder bars the venue actually serves |
+| `resample_from` | object | Target timeframe → source timeframe when not native |
+| `maker_fee_bps`, `taker_fee_bps` | number or null | Used by arbitrage |
+| `withdrawal_fees` | object | Asset → quote amount |
 
-Known base URLs from `prototype/data.py`:
+The venue table (Binance has 8h, 3d, and 1M; Bybit lacks 8h and 3d; OKX lacks 8h; Coinbase and Kraken lack several) is in [repositories.md](repositories.md).
+
+Known base URLs from `prototype/data.py`, plus the planned venues:
 
 | name | base_url |
 | --- | --- |
@@ -206,14 +215,16 @@ Known base URLs from `prototype/data.py`:
 | `binance_vision` | `https://data-api.binance.vision` |
 | `bybit` | `https://api.bybit.com` |
 | `okx` | `https://www.okx.com` |
+| `coinbase` | `https://api.exchange.coinbase.com` |
+| `kraken` | `https://api.kraken.com` |
 
 ## `alert_channels`
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | string | |
-| `kind` | string | `webhook` first. Later kinds register a notifier. |
-| `config` | object | For webhook: `url`, optional `headers`. Secret. |
+| `kind` | string | `grok_chat` first. `webhook` and `email` later. |
+| `config` | object | Empty for `grok_chat`. Webhook: `url`, optional `headers`. Email: `to`. Secrets. |
 | `enabled` | bool | |
 
 ## `alerts`
@@ -222,15 +233,17 @@ One delivery attempt-group per signal per channel.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `signal_id` | string | The deterministic id, not the Mongo id |
-| `channel_id` | object id | |
-| `status` | string | `pending`, `sent`, `failed` |
+| `channel_id` | object id or null | |
+| `channel_kind` | string | Denormalized so the feed does not need a join |
+| `subject_type` | string | `signal`, `entry_plan`, `position`, `arbitrage_opportunity` |
+| `subject_id` | string | |
+| `status` | string | `pending`, `delivered`, `acked`, `failed` |
 | `attempts` | int | |
 | `last_error` | string or null | |
-| `payload` | object | Signal body as sent |
-| `sent_at` | datetime or null | |
+| `payload` | object | What the bot renders |
+| `delivered_at`, `acked_at` | datetime or null | |
 
-Unique index: `(signal_id, channel_id)`.
+Unique index: `(subject_type, subject_id, channel_kind)`. Feed index: `(channel_kind, status, created_at)`.
 
 ## `backtests` and `backtest_events`
 
@@ -263,28 +276,37 @@ Index: `(backtest_id, close_time)`.
 
 The summary does not include PnL until stop and size rules exist. Until then a backtest reports signal counts and the chart-replay score, not money.
 
-## Reserved collections
+## Collections added with Miguel's answers
 
-Not created by this skeleton.
+Full fields and indexes are in [repositories.md](repositories.md). Names:
 
-### `positions` (futures phase)
+| Collection | Domain |
+| --- | --- |
+| `users` | Users |
+| `symbols` | Symbols |
+| `app_settings` | Settings |
+| `dex_venues` | Dexes |
+| `confluence_configs`, `entry_plans` | Strategies/Confluence |
+| `risk_profiles` | Risk |
+| `positions`, `position_events` | Positions |
+| `arbitrage_opportunities`, `venue_quotes` | Arbitrage |
 
-`symbol`, `market: "futures"`, `side` (`long` / `short`), `status` (`open` / `closed`), `entry_price`, `size`, `stop`, `opened_at`, `closed_at`. Stop placement and size are open questions. Do not invent them in the schema beyond nullable fields.
-
-### `arbitrage_opportunities`
-
-`status`, `detected_at`, `legs` (raw objects), `notes`. Leg shape waits on the rules. No indexes beyond the default `_id` until then.
+`positions` cover spot and futures. There is no separate futures collection. `size_base` is null when the risk profile has no equity yet. Arbitrage rows store net spread and do not store an order id.
 
 ## Relationships
 
 ```mermaid
 flowchart LR
-  watchlists --> strategy_configs
-  watchlists --> alert_channels
-  scan_runs --> signals
-  signals --> alerts
-  alert_channels --> alerts
-  backtests --> backtest_events
+  users --> risk_profiles
+  symbols --> watchlists
+  symbols --> positions
+  strategy_configs --> confluence_configs
+  signals --> entry_plans
+  entry_plans --> positions
+  risk_profiles --> positions
+  positions --> position_events
+  entry_plans --> alerts
+  arbitrage_opportunities --> alerts
 ```
 
-Watchlist to strategy and watchlist to channels are stored ids. Signal to scan run is `scan_run_id`. Alerts point at `signal_id` (the hash) and `channel_id`. Nothing here requires a populate on the hot path. The worker is the composition root: it loads the watchlist, loads the strategy config, and passes both into detection. A module does not load another domain's documents.
+The worker loads settings, symbols, and strategy config, then passes candles into detection and the resulting bundle into confluence, risk, positions, and alerts. A module does not load another domain's documents.

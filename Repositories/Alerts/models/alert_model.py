@@ -1,4 +1,4 @@
-"""One delivery per signal per channel. Collection `alerts`."""
+"""One feed row per subject per channel kind. The Grok Bot polls these."""
 
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -13,13 +13,16 @@ def _utcnow() -> datetime:
 
 
 class Alert(Document):
-    signal_id: str
-    channel_id: PydanticObjectId
-    status: Literal["pending", "sent", "failed"] = "pending"
+    channel_id: PydanticObjectId | None = None
+    channel_kind: Literal["grok_chat", "webhook", "email"] = "grok_chat"
+    subject_type: Literal["signal", "entry_plan", "position", "arbitrage_opportunity"]
+    subject_id: str
+    status: Literal["pending", "delivered", "acked", "failed"] = "pending"
     attempts: int = 0
     last_error: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
-    sent_at: datetime | None = None
+    delivered_at: datetime | None = None
+    acked_at: datetime | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -27,8 +30,20 @@ class Alert(Document):
         name = "alerts"
         indexes = [
             IndexModel(
-                [("signal_id", ASCENDING), ("channel_id", ASCENDING)],
+                [
+                    ("subject_type", ASCENDING),
+                    ("subject_id", ASCENDING),
+                    ("channel_kind", ASCENDING),
+                ],
                 unique=True,
-                name="signal_channel",
+                name="subject_channel",
+            ),
+            IndexModel(
+                [
+                    ("channel_kind", ASCENDING),
+                    ("status", ASCENDING),
+                    ("created_at", ASCENDING),
+                ],
+                name="feed",
             ),
         ]

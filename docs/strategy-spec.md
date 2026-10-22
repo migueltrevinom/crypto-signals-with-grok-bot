@@ -13,21 +13,37 @@ When sources disagree, use this order until Miguel closes the question:
 
 Do not change the port to pick up the five missed checks unless the matching question is answered. Those misses are part of the baseline, not a punch list.
 
+## Resolved decisions
+
+Miguel answered these. They override the prototype and the chart pixels where they differ. The seed values live in `Core/planning_seeds.py` and are specified as Mongo documents in [repositories.md](repositories.md).
+
+| Topic | Decision |
+| --- | --- |
+| Signals only | No. The system plans stops and position size. Settings are Mongo `risk_profiles`, per user, strategy, and symbol. The bot still does not send orders. |
+| 70 SMA filter | Always the 6h SMA of closes, length 70, whatever timeframe the entry is on. Longs need price above it. Shorts need price below it. |
+| Timeframe in control | Chosen dynamically on the ladder `4h`, `6h`, `8h`, `1d`, `3d`, `1w`, `1M`. The old fixed map `1w→1d→6h→1h→15m` is retired. `15m`, `30m`, and `1h` are not scan timeframes. |
+| Missing venue bars | Resample onto Binance's grid from a lower native timeframe. Coverage is in the Exchanges section of the repositories doc. |
+| Modes and blocks | They combine. A confluence score on the weekly, 3-day, and daily charts produces one entry plan, then the entry timeframe is chosen below that. |
+| Symbols | USDT quotes are preferred. The monitored set is the `symbols` collection: any quote asset, any enabled venue, with tags and priority. |
+| Alerts | The Grok Bot polls `GET /api/v1/alerts/feed` and acks `delivered` or `acked`. Webhooks and email are later pluggable kinds. |
+| Arbitrage | Cross-venue between CEXes (Binance, Bybit, OKX, Coinbase, Kraken) and DEXes. Record the opportunity net of fees, slippage, and transfer or gas. Place no orders. |
+
 ## Scope
 
-Spot first. Futures uses the same functions later, on futures candles, and is not a second rule set. Arbitrage has no rules and is not specified here.
+Spot is the first market. Futures uses the same detection functions on futures candles. It is not a second rule set. Contract type (USDT-M, coin-M, hedge mode) is still open. Arbitrage is specified as a detection domain in [repositories.md](repositories.md), not as a time@mode variant.
 
-The bot does not place orders. It emits signals. Part A (modes) and Part B (trading blocks) are independent streams. Nothing in the prototype requires a mode confirmation before a block entry, or the reverse.
+The bot does not place orders. It stores signals, an entry plan, a sized position with a stop and targets, and an alert row.
 
-The scanner does not choose "the timeframe in control". The watchlist names the timeframes. The 20-bar limit is the lookback inside a timeframe (`consolidation_limit`), not an automatic jump to the next timeframe. Rule 4 from the notes (modes get small, move up a timeframe) is an open product question, not v1 behavior.
+Part A (modes) and Part B (blocks) still emit their own signal rows, so the chart replay stays comparable. The live entry is the confluence plan that reads both, not either stream alone.
 
 ## Market data the detector assumes
 
 - Candles are closed. The forming candle is dropped. Close time is open time plus the interval.
-- Intervals: `15m`, `30m`, `1h`, `4h`, `6h`, `1d`, `1w`. Week and day boundaries match what Binance, Bybit, and OKX returned in the prototype (the same open times across those sources).
+- The ladder, stored in Mongo, is `4h`, `6h`, `8h`, `1d`, `3d`, `1w`, `1M`.
+- Where a venue lacks one of those bars, MarketData resamples from a lower native timeframe. Alignment is Binance's grid, including Monday 00:00 UTC weeks and calendar months. Details are in the repositories doc.
 - ATR is TradingView `ta.atr(14)`: true range, Wilder/RMA, seeded with the SMA of the first 14 true ranges. Confirmations use the previous candle's ATR.
-- SMA is the simple average of closes, length 70. Not an EMA. The chart fit was SMA 70 on that chart's own timeframe.
-- A higher timeframe is "known" to a lower timeframe only after the HTF candle has closed (`htf.close_time <= ltf.open_time`).
+- The trend filter is the 6h SMA of closes, length 70. Not an EMA. Not the entry timeframe's own SMA. The chart study measured SMA 70 on whatever chart was open (the 1h chart was the 1h SMA). Miguel's answer replaces that: every entry, including a 4h or 8h entry, uses the 6h SMA.
+- A higher timeframe is known to a lower one only after the higher candle has closed (`htf.close_time <= ltf.open_time`).
 
 ## Signal types
 
@@ -36,21 +52,63 @@ The scanner does not choose "the timeframe in control". The watchlist names the 
 | `mode_confirmed` | `bullish` or `bearish` | `mode` | A mode broke on this candle |
 | `bias_flip` | opposite of the mode | `mode` | Engulfing expansion back through the mode |
 | `mode_expiry` | same as the mode | `mode` | The mode's counted lifespan ended on this candle |
-| `block_breakout_entry` | `long` or `short` | `block` | First LTF close through an active HTF block, on the right side of the SMA |
-| `exit` | `long` or `short` | `block` | Exit rule hit for an open block entry |
+| `block_breakout_entry` | `long` or `short` | `block` | First close through an active block, on the right side of the 6h SMA |
+| `exit` | `long` or `short` | `block` | Exit rule hit for an open block position |
 
-`signal_id`, field list, and `details` keys are in [data-model.md](data-model.md). They must stay stable so stored ids match the prototype.
+`signal_id` and the stored fields stay as in [data-model.md](data-model.md) so the prototype hash still matches. `details.sma_timeframe` is `6h` on block entries.
 
-Default ladder (`ltf_map`), used when a block is marked on the HTF and the entry is on the LTF:
+These rows are inputs. The thing the bot acts on is an `entry_plan` from the confluence engine, then a `positions` document. Those are not signal types, so a confluence change does not rewrite old signal ids.
 
-| HTF | LTF |
-| --- | --- |
-| `1w` | `1d` |
-| `1d` | `6h` |
-| `6h` | `1h` |
-| `1h` | `15m` |
+## Timeframe in control
 
-Charts also used 4h→1d and 6h→30m. Those are not in the default map. A watchlist can add timeframes; it cannot express 6h→30m unless `ltf_map` is overridden. That override is allowed in the data model and is off by default.
+Rule 4 from the notes is now this procedure. It runs on the ladder from low to high.
+
+For each timeframe, using only closed candles:
+
+1. Run the mode detector.
+2. Take the best mode whose span ends on the last closed bar or whose confirmation is still inside its expiry window.
+3. The timeframe **fails as too noisy** when the current consolidation is longer than 20 bars (the same `consolidation_limit`).
+4. The timeframe **fails as too small** when that best mode's length is under 5, or the touch density is under `mode_touch_density`.
+5. The timeframe **fits** when the mode length is from 5 through 20 and it did not fail the density check.
+
+The timeframe in control is the lowest ladder timeframe that fits. If 4h fits, 4h is in control. If 4h is too noisy, try 6h, then 8h, and so on. `1M` is the ceiling: if nothing below it fits, `1M` is in control and confluence marks the plan low-confidence when the monthly mode itself does not fit.
+
+"Unclear" means density below the threshold, or two opposite modes within one bar of the same length. An unclear timeframe does not fit, and the search moves up.
+
+The result is `{timeframe, reason}` with `reason` of `fit`, `stepped_up`, or `ceiling`. It is stored on the entry plan and the position. It is not a signal type.
+
+## Confluence and the entry decision
+
+Modes and blocks combine here. Weights and thresholds are the `confluence_configs` document. The seed is in `Core/planning_seeds.py`.
+
+The worker passes in, per symbol and per direction (`long` from bullish modes, `short` from bearish modes):
+
+- mode confirmations and block breaks on each ladder timeframe, from the detector
+- the timeframe in control and its mode direction
+- whether the latest 6h close is above or below the 6h SMA 70
+
+Score for one direction:
+
+- Add `weights.mode_confirmed[tf]` for each decision or ladder timeframe that has a `mode_confirmed` in that direction whose expiry window still covers the latest bar.
+- Add `weights.block_break[tf]` for each timeframe with a `block_breakout_entry` in that direction on a still-active block.
+- Add `weights.sma_6h_agreement` when the 6h close is on the correct side of the 6h SMA.
+- Add `weights.timeframe_in_control_agreement` when the timeframe in control's mode direction matches.
+- Subtract `weights.htf_conflict_penalty` when any two of `1w`, `3d`, and `1d` have confirmations in opposite directions.
+
+`require_sma_6h` true means a failing SMA check zeros the score. The seed is true.
+
+Thresholds: `watch` (5) stores nothing by itself. `entry` (8) is the minimum to propose a plan. At least one of `1w`, `3d`, or `1d` must have contributed a mode or a block point in that direction. A lower-timeframe-only score does not enter, even if the number clears 8. That is the "confirm on the weekly, 3-day, and daily, then drill down" rule. One of the three is enough to pass the gate. More of them raise the score through the weights. Weekly is weighted highest on purpose.
+
+Entry timeframe, once the score clears `entry`:
+
+1. Consider `entry_timeframes` (`4h`, `6h`, `8h`) that are strictly below the lowest decision timeframe which contributed points.
+2. Keep those that have a fresh trigger on their latest closed bar: a mode confirmation or a block break in the same direction, and a local mode length from 5 to 20.
+3. Pick the first remaining name in `entry_timeframe_priority` (`4h`, then `6h`, then `8h`).
+4. If none of the entry timeframes qualify, the entry timeframe is the lowest decision timeframe that contributed points. The plan does not invent a 1h or 30m entry. Those charts in the study stay historical evidence for what a block and an exit look like.
+
+The plan's direction is `long` or `short`. The underlying mode signals keep `bullish` and `bearish` so the replay ids do not change.
+
+A plan expires when a newer closed bar on the entry timeframe no longer holds the trigger. The worker sets `expired`. It does not delete the row.
 
 ## Part A — modes
 
@@ -121,7 +179,7 @@ Emit `bias_flip` with the opposite direction. One flip per confirmation.
 
 ## Part B — trading blocks
 
-Evaluated per HTF series. Entries and exits are on the mapped LTF.
+Evaluated on each ladder timeframe. The old one-step LTF map is not used. A block on a timeframe is a component of the confluence score. The entry bar is chosen by the entry-timeframe rule above, and it still has to be a real close through that block (or through the mode) on that entry timeframe.
 
 ### Block definition
 
@@ -141,7 +199,7 @@ A new block within `block_merge_atr` (0.25) times ATR of an existing same-direct
 On the LTF, in order:
 
 1. Resolve exits for any open position on this bar first.
-2. The LTF close must be on the correct side of the SMA filter: above SMA for a long, below for a short. Default `sma_filter_timeframe` is `entry`, meaning the LTF's own SMA 70. `htf` uses the HTF SMA. Any other value is a timeframe name whose SMA is sampled at the LTF bar. The charts show the SMA of the chart being looked at (6h SMA on the 6h chart, 1h SMA on the 1h chart). The notes say H6. The default follows the charts.
+2. The close must be on the correct side of the **6h** SMA 70: above for a long, below for a short. This is `sma_filter_timeframe: "6h"` and it does not follow the entry timeframe. The 1h chart in the study showed a 1h SMA. That observation stands, and the live rule is the 6h SMA anyway, because that is the answer Miguel gave. The prototype's `entry` setting is not ported.
 3. The previous LTF close was on the other side of an active block and this close is beyond it.
 4. If a position in that direction is already open, the new block must be further out (higher for longs, lower for shorts). That entry replaces the exit level.
 
@@ -175,12 +233,12 @@ All of these live in `strategy_configs.params` and can change without a code edi
 | Doji or small confirmation | Not accepted. `clear_gap` needs a 60% body. Expansion needs a real body |
 | Expansion definition | Either previous-range or 60% of own range |
 | Flip window and margin | 3 bars, engulfing, previous-range expansion, no ATR margin |
-| SMA timeframe | The entry timeframe's own SMA 70 |
+| SMA timeframe | **Resolved: always 6h SMA 70.** The prototype's `entry` value is not the live rule |
 | Block window, wait, life, merge | 20 bars, 2 bars after, 30-bar life, merge inside 0.25 ATR |
-| Exit | `two_lower_closes` as implemented |
+| Exit | Seeded as `two_lower_closes` on the risk profile. The three-bar low sequence in the code is still an open reading of the chart callout |
 | Shorts | On |
-| Stop and size | Not implemented |
-| Part A plus Part B | Separate signal types |
+| Stop and size | **Resolved: stored on `risk_profiles`.** Seed is `below_structure` with a 0.25 ATR buffer, 1% of manual equity, trailing by expansion candle, targets at 2R and 3R. Equity itself is unset until he fills it in |
+| Part A plus Part B | **Resolved: confluence engine.** Detector rows stay separate. The entry is one plan |
 | R.E.Signal V3.3 and the triangle markers | Not used |
 
 ## Validation baseline
@@ -196,8 +254,10 @@ All of these live in `strategy_configs.params` and can change without a code edi
 - ETHBTC 1W 29 Mar 2021 bullish, level about 0.0314, length 6, expiry 10 May 2021.
 - ETHBTC 1W 7 Jun 2021 bearish, level about 0.0735, length 5, expiry 12 Jul 2021.
 - ARBBTC daily block 0.00003014, 6h long entry 22 Dec 2023 06:00 UTC, expansion candle.
-- ARBBTC 6h block 0.00003227, 1h long entry on 27 Dec 2023.
-- ETHUSDT 6h block about 2503.2, 30m entry 11 Feb 2024 00:30 UTC, an exit early on 12 Feb, and a re-entry 12 Feb 14:30 UTC.
+- ARBBTC 6h block 0.00003227, 1h long entry on 27 Dec 2023. The live ladder does not scan 1h. This check guards the block detector, not the entry-timeframe chooser.
+- ETHUSDT 6h block about 2503.2, 30m entry 11 Feb 2024 00:30 UTC, an exit early on 12 Feb, and a re-entry 12 Feb 14:30 UTC. 30m is not on the live ladder either. Same split: the check guards the exit rule, and live entries are 4h, 6h, or 8h.
+
+The block checks above were scored with the prototype's entry-timeframe SMA. The live filter is the 6h SMA. Re-running those three entries against the 6h SMA is part of the port, and a difference is expected to be reported rather than silently patched back to the old SMA.
 
 These failed and stay failed under the current defaults:
 
@@ -210,37 +270,30 @@ The Feb–Apr daily misses are not explained by the 0.7 threshold alone. The det
 
 ## Known prototype limitations to fix in the port, not in the rules
 
-- OKX inst id is `symbol[:-4] + "-USDT"`. That is correct for `BTCUSDT` and wrong for `ETHBTC` / `ARBBTC`. Binance and Bybit pass the symbol through. The port needs a real inst-id map per source.
+- OKX inst id is `symbol[:-4] + "-USDT"`. That drops any non-USDT quote. The port uses `symbol_style: dash` (`ETH-BTC`, `BTC-USDT`) from the symbol's listing. Kraken is `alias` and is never sliced.
 - `state.json` dedup is replaced by the unique `signal_id` index. Same id formula.
 - Fetch uses threads and `urllib`. The port uses the async HTTP client. Candle results for a given closed range must match.
 
 ## Open questions
 
-Strategy, for Miguel:
+Answered, and specified above or in [repositories.md](repositories.md): stops and size as Mongo risk profiles, 6h SMA, the dynamic ladder and resampling, confluence of modes and blocks, the symbols collection, Grok Bot polling, and CEX/DEX arbitrage with no orders.
 
-1. Where does the initial stop go? No chart shows one. Below the block, below the expansion candle, below the last swing, or not in the bot at all?
-2. Position size and risk per trade are not in the notes. Signals only, until he says otherwise?
-3. SMA 70: always 6h, the entry chart's own SMA (what the charts show and what the prototype does), or both?
-4. Timeframe ladder: keep the fixed table, or pick the nearest standard interval to 5x? Should 4h→1d and 6h→30m be defaults?
-5. Is 0.7 ATR strict? One weekly confirmation was marked at about 0.3 ATR and the prototype misses it on purpose.
-6. When several wicks qualify, is "longest, then longest span, then nearest close" the right anchor rule?
-7. Can a doji or a small candle confirm when the wick stays beyond the mode (the 19 Oct 2021 discussion)? The prototype says no.
-8. What do R.E.Signal V3.3 and the blue/grey triangles compute? Left out until defined.
-9. Do Part A modes and Part B blocks ever combine into one entry, or do they stay two signal streams?
-10. Exit: two closes back inside the level, or the stricter three-bar lower-low sequence the code uses? Which two ETH 30m candles are the callout?
-11. Is the body-cross count really "daily confirming candle is #1, weekly confirming candle is part of the mode"?
-12. Block activation: must the next bars close back inside the block, or is waiting two bars enough (what the code does)?
-13. Bias-flip expansion ignores `expansion_rule` and always uses previous-range. Should it use the same expansion definition as confirmations?
-14. Should the bot ever move itself up a timeframe when a consolidation exceeds 20 bars (Rule 4), or only scan the watchlist?
-15. Direction labels: keep `bullish`/`bearish` on modes and `long`/`short` on blocks, or use one pair?
+Still open:
 
-Product, for Miguel:
-
-16. How long should signals and scan runs be kept? Proposal: keep signals, delete scan runs after 90 days.
-17. Where will API, worker, and Mongo run?
-18. First alert channel is a webhook. Is Telegram, email, or something else required for the first useful version?
-19. One shared API key is the plan. Are there other users?
-20. Symbol universe: USDT pairs only, or also BTC pairs like the chart examples? The port will support both on Binance-style symbols either way.
-21. Futures: which exchange and contract (USDT-M, coin-M), and does a signal open a tracked position or only an alert?
-22. Arbitrage: cross-exchange spot, funding, triangular, or something else? No module work until this is written down.
-23. Should the GitHub default branch stay `main`, or move to `development` once this PR is merged? Should `main` later mirror `production`?
+1. Is 0.7 ATR strict? The 12 Apr 2021 weekly confirmation was about 0.3 ATR, and the prototype misses it on purpose.
+2. When several wicks qualify, is "longest, then longest span, then nearest close" the anchor rule he wants to keep?
+3. Can a doji confirm when the wick stays beyond the mode (19 Oct 2021)? The prototype says no.
+4. What R.E.Signal V3.3 and the blue/grey triangles compute. Still unused.
+5. Exit seed: the risk profile uses `two_lower_closes`, which in code also requires a three-bar run of lower lows. The chart callout reads as two closes. Which seed should stay?
+6. Body-cross counting: daily confirming candle is #1, weekly confirming candle is part of the mode. Is that the rule for 3d, 8h, and 4h as well (treat them like daily)?
+7. Block activation: the code waits two bars. The notes say those bars closed back inside the block. Which one?
+8. Bias-flip expansion uses previous-range only, not `expansion_rule`. Should those match?
+9. Keep `bullish`/`bearish` on mode signals and `long`/`short` on blocks and plans, or one vocabulary?
+10. How long to keep signals and scan runs? Proposal: keep signals, drop scan runs after 90 days, drop `venue_quotes` after one day.
+11. Where API, worker, and Mongo will run.
+12. Futures contract: USDT-M, coin-M, or both, and hedge mode or one-way.
+13. Confirm the numeric seeds: 1% equity, 0.25 ATR stop buffer, confluence entry threshold 8, arbitrage `min_net_spread_bps` 0, slippage 5 bps. They are editable in Mongo. Equity is blank until he sets `manual_equity`.
+14. Slippage for arbitrage: the seed is a flat bps value. A book-depth model is not specified.
+15. Which gas source a DEX quote should use, and which chains besides Ethereum to enable first.
+16. The API key is still one shared secret, mapped to a single `users` row. Per-user keys are not specified.
+17. Should the GitHub default branch move from `main` to `development` after this PR merges?

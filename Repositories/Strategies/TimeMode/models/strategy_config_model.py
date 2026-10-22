@@ -18,9 +18,6 @@ class ScannerSettings(BaseModel):
     data_sources: list[str] = Field(
         default_factory=lambda: ["binance", "binance_vision", "bybit", "okx"]
     )
-    ltf_map: dict[str, str] = Field(
-        default_factory=lambda: {"1w": "1d", "1d": "6h", "6h": "1h", "1h": "15m"}
-    )
     state_retention_days: int = 120
 
 

@@ -1,6 +1,6 @@
 # Architecture
 
-crypto-signals-with-grok-bot is a Python service that scans crypto markets with Miguel's time@mode rules, stores the signals, and sends alerts. This document is the planning architecture. The detection rules themselves are specified in [strategy-spec.md](strategy-spec.md). The folder layout is the one to build into; most of the files in this pass are placeholders.
+crypto-signals-with-grok-bot scans crypto markets with Miguel's time@mode rules, plans a stop and a size, and leaves an alert the Grok Bot can poll. This document is the planning architecture. Detection rules are in [strategy-spec.md](strategy-spec.md). Every domain's files and fields are in [repositories.md](repositories.md). Most files in this pass are placeholders.
 
 ## Stack
 
@@ -14,7 +14,7 @@ crypto-signals-with-grok-bot is a Python service that scans crypto markets with 
 | Reads | `Core.mongo_orm.build_query` | Same rule as verifik: modules do not invent their own queries. Beanie's `find` API is not the read path. |
 | HTTP client | httpx, behind `Core.http_client` | Async, and one place to add timeouts and retries when the exchange fetch is ported. |
 | Worker schedule | APScheduler, inside the worker process | One interval job. Celery and Redis are not justified until there is a real queue of work. Not a dependency in this pass. |
-| Alerts | A `Notifier` protocol, webhook first | New channels are new classes. The scan does not know about HTTP. |
+| Alerts | A `Notifier` protocol. The Grok Bot polls a feed | Webhook and email are the same protocol, later. The scan does not know about HTTP. |
 
 PyMongo is the library Motor wraps. Application code does not construct a synchronous `MongoClient`.
 
@@ -44,7 +44,7 @@ Domain folders stay PascalCase (`Repositories/Signals`), matching verifik.
 
 ### What we are not copying
 
-verifik is multi-tenant: almost every read adds `where_client` from `authUser.clientId`. This app is Miguel's scanner. There is no client, user, or account collection in the plan. Protected routes check a single `X-API-Key` (`Core/auth.py`). When `APP_ENV=development` and `API_KEY` is empty, the check is skipped so local use needs no secret. Staging and production must set `API_KEY`; a protected route returns 500 `server_misconfigured` if they do not. A users collection can be added later without moving domains around. That is an open product question, not a hidden tenant filter.
+verifik is multi-tenant: almost every read adds `where_client` from `authUser.clientId`. This app does not copy that filter. It does have a `users` collection, because risk profiles and alerts are per user. Auth is still one `X-API-Key` (`Core/auth.py`), and that key maps to the seeded user. When `APP_ENV=development` and `API_KEY` is empty, the check is skipped. Staging and production must set `API_KEY`; a protected route returns 500 `server_misconfigured` if they do not.
 
 ## Layers
 
@@ -60,7 +60,7 @@ flowchart TD
   mongo[(MongoDB)]
   worker[Worker process]
   http[Core.http_client]
-  exchanges[Binance, Binance Vision, Bybit, OKX]
+  exchanges[CEX klines and DEX quotes]
 
   client --> route --> mw --> ctrl --> mod
   mod --> orm --> mongo
@@ -76,23 +76,29 @@ Planned scan, once phase 1 fills the stubs in:
 ```mermaid
 sequenceDiagram
   participant Worker
-  participant Watchlists
-  participant Strategy as Strategies/TimeMode
+  participant Settings
+  participant Symbols
   participant Market as MarketData
-  participant Signals
+  participant TimeMode
+  participant Confluence
+  participant Risk
+  participant Positions
   participant Alerts
-  Worker->>Watchlists: enabled watchlists
-  Worker->>Strategy: active params
-  Worker->>Market: closed candles for each symbol and timeframe
-  Market-->>Worker: candles
-  Worker->>Strategy: detect(candles, params)
-  Strategy-->>Worker: raw signals
-  Worker->>Signals: upsert by signal_id
-  Worker->>Alerts: new signal ids only
-  Alerts->>Alerts: Notifier.send per channel
+  Worker->>Settings: ladder and 6h SMA filter
+  Worker->>Symbols: enabled listings
+  Worker->>Market: closed candles, resampled when needed
+  Market-->>Worker: series
+  Worker->>TimeMode: detect per timeframe
+  TimeMode-->>Worker: signals and timeframe in control
+  Worker->>Confluence: signals plus 6h SMA side
+  Confluence-->>Worker: entry plan
+  Worker->>Risk: plan and profile
+  Risk-->>Worker: stop and size
+  Worker->>Positions: planned position
+  Worker->>Alerts: pending feed row
 ```
 
-`Strategies/TimeMode` is a pure function of candles and params. It does not fetch, and it does not write. `MarketData` fetches and, later, may cache candles. `Signals` persists. `Alerts` delivers. The worker passes data between them. That is what keeps the "no module-to-module calls" rule intact.
+`Strategies/TimeMode` is a pure function of candles and params. Confluence scores a bundle it is given. Risk sizes a plan it is given. None of them fetch or call each other. The worker passes the data. The full file list is [repositories.md](repositories.md).
 
 ## Request flow
 
@@ -149,44 +155,47 @@ Populates are allow-listed per call (`allowed_populates`). A requested relation 
 Two processes, one codebase:
 
 - **API** — `uvicorn app.main:app`. Serves `/health`, `/docs`, and `/api/v1`. Does not scan on a timer. A later `POST /api/v1/scanner/runs` may enqueue one scan; the worker executes scans.
-- **Worker** — `python -m app.worker`. Loads watchlists and the active strategy config, fetches closed candles, runs time@mode, upserts signals, hands new ids to Alerts. The schedule (default 900 seconds, `SCAN_INTERVAL_SECONDS`) lives here, via APScheduler once phase 1 adds it. The skeleton's `--once` flag logs that the scanner is not ported and exits 0.
+- **Worker** — `python -m app.worker`. Loads settings and enabled symbols, fetches or resamples closed candles, runs time@mode, scores confluence, sizes a position, and inserts a pending alert for the Grok Bot. The schedule (default 900 seconds, `SCAN_INTERVAL_SECONDS`) lives here, via APScheduler once the scanner port adds it. The skeleton's `--once` flag logs that the scanner is not ported and exits 0.
 
-The API does not open Mongo in this pass. `Core.database.connect(models)` is the phase 1 startup call. The model list is `app/documents.py`, not a hard-coded import inside Core, so Core does not depend on every domain. `Repositories/Arbitrage` and `Repositories/Futures/Positions` are left off that list until their phases.
+The API does not open Mongo in this pass. `Core.database.connect(models)` is the phase 1 startup call. The model list is `app/documents.py`, not a hard-coded import inside Core, so Core does not depend on every domain. The list includes the planned documents (risk, positions, arbitrage, symbols, settings) so the schema is one place. `connect()` is still not called.
 
-Dedup moves off `prototype/state.json`. The signal's deterministic `signal_id` has a unique index. A repeated scan upserts the same document and does not send a second alert. Alert uniqueness is `(signal_id, channel_id)`.
+Dedup moves off `prototype/state.json`. The signal's deterministic `signal_id` has a unique index. A repeated scan upserts the same document and does not insert a second alert. Alert uniqueness is `(subject_type, subject_id, channel_kind)`.
 
 ## Domains
 
-| Domain | Responsibility | Collection |
+The per-domain files, endpoints, fields, and indexes are in [repositories.md](repositories.md). Summary:
+
+| Domain | Responsibility | Collections |
 | --- | --- | --- |
-| `MarketData` | Closed candles: fetch, fallback, optional cache | `candles` |
-| `Exchanges` | Ordered public kline sources | `exchange_sources` |
-| `Strategies/TimeMode` | Pure time@mode detection and the parameter document | `strategy_configs` |
-| `Signals` | Stored signals and scan runs | `signals`, `scan_runs` |
-| `Watchlists` | Symbols, timeframes, which strategy and channels apply | `watchlists` |
-| `Alerts` | Delivery state and the notifier interface | `alerts`, `alert_channels` |
-| `Backtests` | Historical runs of the same pure detector | `backtests`, `backtest_events` |
-| `Arbitrage` | Reserved. No rules yet | `arbitrage_opportunities` (not registered) |
-| `Futures/Positions` | Reserved. Same rules on futures markets, later | `positions` (not registered) |
+| `Users` | Account for risk and alerts | `users` |
+| `Symbols` | All pairs to monitor, any quote, per venue | `symbols` |
+| `Settings` | Ladder, scanner, symbol prefs, arbitrage settings | `app_settings` |
+| `Exchanges` | CEX klines, native intervals, symbol style, fees | `exchange_sources` |
+| `Dexes` | DEX quotes and gas inputs | `dex_venues` |
+| `MarketData` | Closed candles and resampling | `candles` |
+| `Strategies/TimeMode` | Mode and block detection, timeframe in control | `strategy_configs` |
+| `Strategies/Confluence` | Score and one entry plan | `confluence_configs`, `entry_plans` |
+| `Signals` | Detector rows and scan runs | `signals`, `scan_runs` |
+| `Watchlists` | Optional subsets of `symbols` | `watchlists` |
+| `Risk` | Stops, size, leverage, targets | `risk_profiles` |
+| `Positions` | Planned trades and lifecycle events | `positions`, `position_events` |
+| `Alerts` | Grok Bot feed; webhook and email later | `alerts`, `alert_channels` |
+| `Backtests` | Historical runs, including sizing | `backtests`, `backtest_events` |
+| `Arbitrage` | Cross-venue net spreads. No orders | `arbitrage_opportunities`, `venue_quotes` |
 
-There is no `Scanner` domain. Scanning is the worker composing the domains above. `GET /api/v1/scanner/status` lives on the app router for that reason.
-
-`Strategies/TimeMode` is nested so a later strategy (arbitrage is a domain of its own, but another price-action strategy would sit beside `TimeMode`) has a place to live. Arbitrage is a sibling domain, not a strategy package, because Miguel described it as a future module with its own rules, not as a parameter set on time@mode.
+There is no `Scanner` domain and no separate futures domain. Futures is a `market` value. `GET /api/v1/scanner/status` stays on the app router.
 
 ## Alert delivery
 
-```text
-Alerts/modules/notifier.py     Notifier protocol
-Alerts/modules/webhook_notifier.py
-```
+The first channel is `grok_chat`. The worker inserts an alert with `status: pending`. The bot polls `GET /api/v1/alerts/feed` and posts `delivered` or `acked`. `GrokChatNotifier` does not push.
 
-`WebhookNotifier` is the only implementation planned for the first delivery phase. `send` receives the channel document and the signal payload. The module picks the class from `channel.kind`. Adding Telegram or email later is a new class and a new `kind`, not a change to detection.
-
-Webhook config (`url`, optional headers) is a secret. It is stored in Mongo, never logged, and never returned in full by the API (the spec masks the URL). The skeleton has no channel storage yet.
+`WebhookNotifier` and `EmailNotifier` are the same protocol and are not implemented. Their config is secret, masked on list responses, and never logged. Adding a channel is a new class and a new `kind`.
 
 ## Configuration and prototype bridge
 
-Runtime settings come from the environment (`Core/config.py`, `.env.example`). Strategy parameters are not environment variables. They will live in `strategy_configs`. Until that document is seeded, `Core.prototype_config.load_prototype_config()` reads `prototype/config.json` so the skeleton can show the real defaults. That helper is temporary. Phase 2 deletes it once Mongo holds the active config. The prototype package itself stays as the behavior oracle.
+Process settings (port, Mongo URL, API key, log level) come from the environment. Strategy parameters, the ladder, risk, confluence weights, and the symbol universe are Mongo documents. `Core/planning_seeds.py` holds Miguel's resolved defaults until phase 2 inserts them.
+
+`Core.prototype_config` still reads `prototype/config.json` for the detection params he has not replaced (ATR length, mode windows, and the rest). The time@mode show route overlays `sma_filter_timeframe: "6h"` and does not return the old `ltf_map` as the live ladder. The prototype file is not edited. Phase 2 deletes the runtime read once `strategy_configs` is seeded.
 
 ## Failure behavior (planned)
 

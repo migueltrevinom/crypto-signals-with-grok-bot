@@ -13,7 +13,7 @@ def _utcnow() -> datetime:
 
 class AlertChannel(Document):
     name: str
-    kind: Literal["webhook"] = "webhook"
+    kind: Literal["grok_chat", "webhook", "email"] = "grok_chat"
     config: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     created_at: datetime = Field(default_factory=_utcnow)

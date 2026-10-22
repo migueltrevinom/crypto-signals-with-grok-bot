@@ -124,12 +124,9 @@ Page of watchlists.
 
 ```json
 {
-  "name": "main",
-  "symbols": [{"symbol": "BTCUSDT", "exchange": "binance", "market": "spot"}],
-  "timeframes": ["1h", "6h", "1d", "1w"],
-  "ltf_map": {},
+  "name": "majors",
+  "symbol_ids": [],
   "strategy_key": "time_mode",
-  "alert_channel_ids": [],
   "enabled": true
 }
 ```
@@ -150,7 +147,7 @@ Replaces the mutable fields. Same body as create. `{"data": ..., "status": "comp
 
 ### `GET /api/v1/strategies/time-mode`
 
-The active `time_mode` config. Skeleton behavior (implemented now): reads `prototype/config.json` and returns it unsaved.
+The active `time_mode` config. Skeleton behavior: prototype detection params, with `sma_filter_timeframe` set to `6h`, plus the ladder. Not stored.
 
 ```json
 {
@@ -160,22 +157,22 @@ The active `time_mode` config. Skeleton behavior (implemented now): reads `proto
     "version": 0,
     "active": true,
     "persisted": false,
-    "source": "prototype/config.json",
-    "params": {},
+    "params": {"sma_filter_timeframe": "6h", "confirm_atr_mult": 0.7},
     "scanner": {
       "history_bars": 1000,
       "report_window_bars": 3,
       "data_sources": ["binance", "binance_vision", "bybit", "okx"],
-      "ltf_map": {"1w": "1d", "1d": "6h", "6h": "1h", "1h": "15m"},
       "state_retention_days": 120
     },
-    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ARBUSDT"],
-    "timeframes": ["1h", "6h", "1d", "1w"]
+    "ladder": {
+      "timeframes": ["4h", "6h", "8h", "1d", "3d", "1w", "1M"],
+      "sma_filter_timeframe": "6h"
+    }
   }
 }
 ```
 
-`persisted`, `source`, `symbols`, and `timeframes` are skeleton fields. `symbols` and `timeframes` move to the default watchlist once seeding exists. `persisted` and `source` go away. `version` becomes `1` on the seeded document.
+`persisted` goes away once the document is seeded. `version` becomes `1`. Symbols are not on this document. They live in `symbols`.
 
 ### `PUT /api/v1/strategies/time-mode`
 
@@ -221,20 +218,39 @@ Phase 2. Toggle `enabled` and `priority`. Cannot create an unknown source name u
 
 ## Alerts
 
+The Grok Bot uses the feed. Webhook and email are later `kind` values on the same channel collection.
+
+### `GET /api/v1/alerts/feed`
+
+Query: `status` (default `pending`), `limit` (default 50, max 100), `cursor`.
+
+```json
+{"data": [], "cursor": null, "limit": 50}
+```
+
+Each item has `id`, `channel_kind`, `subject_type`, `subject_id`, `status`, `payload`, `created_at`.
+
+### `POST /api/v1/alerts/{id}/ack`
+
+Body: `{"status": "delivered"}` or `{"status": "acked"}`. `delivered` means the bot showed it. `acked` means it was dealt with. The only forward path is `pending` → `delivered` → `acked`.
+
 ### `GET /api/v1/alert-channels`
 
 ### `POST /api/v1/alert-channels`
 
+Current kind:
+
 ```json
-{
-  "name": "miguel",
-  "kind": "webhook",
-  "enabled": true,
-  "config": {"url": "https://example.com/hooks/signals", "headers": {}}
-}
+{"name": "grok", "kind": "grok_chat", "enabled": true, "config": {}}
 ```
 
-The response masks `config.url` to the scheme and host, and drops `headers`. `GET` one channel for editing can return the full config; list responses stay masked.
+Later kind, not implemented:
+
+```json
+{"name": "hook", "kind": "webhook", "enabled": false, "config": {"url": "https://example.com/hooks/signals"}}
+```
+
+List responses mask `config.url` and email `to`. A single GET for editing can return the full config.
 
 ### `GET /api/v1/alert-channels/{id}`
 
@@ -244,15 +260,11 @@ The response masks `config.url` to the scheme and host, and drops `headers`. `GE
 
 ### `POST /api/v1/alert-channels/{id}/test`
 
-Sends a fake payload `{"type": "test"}` through that channel's notifier. `200` `{"data": {"status": "sent"}}` or `502` `{"message": "...", "code": "delivery_failed"}`.
+For `grok_chat`, inserts a pending test row the feed will return. For webhook or email, `501` until that phase. A failed push later is `502` `delivery_failed`.
 
 ### `GET /api/v1/alerts`
 
-Query: `signal_id`, `channel_id`, `status`, `page`, `limit`.
-
-### `POST /api/v1/alerts/{id}/retry`
-
-Sets `pending` and asks the worker to send again. `202`.
+Query: `subject_type`, `subject_id`, `channel_kind`, `status`, `page`, `limit`.
 
 ## Backtests
 
@@ -281,14 +293,31 @@ Includes `summary`. Does not inline every event.
 
 Paged `backtest_events`, filters `type`, `symbol`, `timeframe`.
 
-## Futures and arbitrage
+## Settings, symbols, risk, positions, confluence, arbitrage
 
-No routes in the skeleton. When those phases start:
+The contract for each route is in [repositories.md](repositories.md). Short form:
 
-- `GET/POST /api/v1/positions` for futures positions
-- `GET /api/v1/arbitrage/opportunities` once a rule set exists
+| Method | Path | Role |
+| --- | --- | --- |
+| GET, PUT | `/api/v1/settings/ladder` | Ladder, including the 6h SMA filter |
+| GET, PUT | `/api/v1/settings/scanner` | History window and source order |
+| GET, PUT | `/api/v1/settings/symbols` | Preferred quote assets |
+| GET, PUT | `/api/v1/settings/arbitrage` | Min net spread and slippage seed |
+| GET, POST | `/api/v1/symbols` | Universe of pairs |
+| GET, POST | `/api/v1/users` | Accounts |
+| GET, PUT | `/api/v1/strategies/confluence` | Weights and thresholds |
+| GET | `/api/v1/entry-plans` | Proposed entries |
+| GET, POST | `/api/v1/risk-profiles` | Stops and size |
+| POST | `/api/v1/risk-profiles/resolve` | Compute stop and size, do not store |
+| GET, POST | `/api/v1/positions` | Planned positions |
+| PATCH | `/api/v1/positions/{id}` | Manual `active` or `cancelled` |
+| GET | `/api/v1/position-events` | Lifecycle log |
+| GET | `/api/v1/alerts/feed` | Grok Bot poll |
+| POST | `/api/v1/alerts/{id}/ack` | `delivered` or `acked` |
+| GET | `/api/v1/dexes` | DEX connectors |
+| GET | `/api/v1/arbitrage/opportunities` | Net spreads. No order route |
 
-Do not add the routes before the rules exist.
+`GET /api/v1/strategies/time-mode` returns prototype detection params with `sma_filter_timeframe` set to `6h`, plus the ladder. It does not present the old `ltf_map` as live.
 
 ## Implemented in this planning skeleton
 
@@ -300,9 +329,22 @@ Do not add the routes before the rules exist.
 | GET | `/api/v1/watchlists` | Empty page |
 | GET | `/api/v1/backtests` | Empty page |
 | GET | `/api/v1/alerts` | Empty page |
+| GET | `/api/v1/alerts/feed` | Empty feed `{data, cursor, limit}` |
 | GET | `/api/v1/alert-channels` | Empty page |
 | GET | `/api/v1/market-data/candles` | Empty page |
-| GET | `/api/v1/exchanges` | Prototype source list, not stored |
-| GET | `/api/v1/strategies/time-mode` | Prototype config, not stored |
+| GET | `/api/v1/exchanges` | Venue catalog, including native intervals. Not stored |
+| GET | `/api/v1/dexes` | DEX seed, disabled. Not stored |
+| GET | `/api/v1/strategies/time-mode` | Prototype params overlaid with the 6h SMA and the new ladder |
+| GET | `/api/v1/strategies/confluence` | Weight seed. Not stored |
+| GET | `/api/v1/settings/ladder` | Ladder seed |
+| GET | `/api/v1/settings/scanner` | Scanner seed |
+| GET | `/api/v1/settings/arbitrage` | Spread and slippage seed, `place_orders` false |
+| GET | `/api/v1/symbols` | Empty page |
+| GET | `/api/v1/users` | Empty page |
+| GET | `/api/v1/risk-profiles` | The default seed as one row. Not stored |
+| GET | `/api/v1/positions` | Empty page |
+| GET | `/api/v1/position-events` | Empty page |
+| GET | `/api/v1/entry-plans` | Empty page |
+| GET | `/api/v1/arbitrage/opportunities` | Empty page |
 
-`POST`, `PUT`, `PATCH`, and `DELETE` are specified above and are not mounted yet. Calling them is 404.
+`POST`, `PUT`, `PATCH`, and `DELETE` are specified above and are not mounted yet. Calling them is 404. There is no order endpoint.

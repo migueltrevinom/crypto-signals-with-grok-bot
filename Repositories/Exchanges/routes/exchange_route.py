@@ -12,6 +12,6 @@ router = APIRouter(
 )
 
 
-@router.get("", summary="List kline sources from the prototype config. Not persisted.")
+@router.get("", summary="CEX catalog with native intervals and symbol style. Not stored.")
 async def list_exchanges() -> dict:
     return await exchange_controller.list_sources()

@@ -59,11 +59,15 @@ Webhook notifier against `httpx.MockTransport` or a local stub. Assert the paylo
 
 ### Backtests
 
-The chart fixture suite is the first backtest. Summary counts must equal the pure-rule tests. No PnL assertions until stop and size exist.
+The chart fixture suite is the first backtest. Summary counts must equal the pure-rule tests. Hypothetical R from the planned stop is labeled `hypothetical`. No filled-order PnL.
 
 ## What not to test
 
-- The reserved Arbitrage and Futures packages have no behavior.
+- Arbitrage net-spread math gets fixture tests in its phase: two quotes in, one net bps out. No test sends an order.
+- Resampling tests lock Binance's 8h, 3d, weekly, and monthly open times.
+- Confluence tests lock the seed weights: a conflicting weekly and daily score is penalized, a failed 6h SMA zeros the score, and no plan uses a 1h entry.
+- Risk tests lock the size formula, including a null equity leaving `size_base` null.
+- Alert tests lock `pending → delivered → acked` on the feed.
 - Do not snapshot the entire FastAPI OpenAPI schema in phase 0. It will churn as routes are filled in.
 - Do not require the prototype's live `validate.py` in CI. Historical exchange responses can move by a bar revision; fixtures will not.
 

@@ -8,6 +8,7 @@ from pydantic import Field
 
 Market = Literal["spot", "futures"]
 AuthKind = Literal["none", "api_key"]
+SymbolStyle = Literal["concat", "dash", "alias"]
 
 
 def _utcnow() -> datetime:
@@ -22,6 +23,12 @@ class ExchangeSource(Document):
     market: Market = "spot"
     enabled: bool = True
     auth: AuthKind = "none"
+    symbol_style: SymbolStyle = "concat"
+    native_timeframes: list[str] = Field(default_factory=list)
+    resample_from: dict[str, str] = Field(default_factory=dict)
+    maker_fee_bps: float | None = None
+    taker_fee_bps: float | None = None
+    withdrawal_fees: dict[str, float] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

@@ -1,6 +1,6 @@
 # crypto-signals-with-grok-bot
 
-Scans crypto markets with Miguel's **time@mode** rules, stores the signals, and alerts him. The rules cover trend and modes, mode expiry, ATR and expansion-candle confirmations, bias flips, the timeframe ladder, trading blocks, the 70 SMA filter, and exits. Spot is the first market. Futures uses the same rules later. Arbitrage is a reserved module: the notes do not describe it yet.
+Scans crypto markets with Miguel's **time@mode** rules, plans a stop and a position size, and alerts him in the Grok Bot chat. The live ladder is `4h`, `6h`, `8h`, `1d`, `3d`, `1w`, `1M`. The trend filter is always the 6h 70 SMA. Modes and trading blocks combine into one entry through a confluence score. USDT pairs are preferred, and the monitored set is a Mongo collection of every enabled pair. Arbitrage across centralized and decentralized exchanges is planned and does not send orders.
 
 A working Python scanner already exists. It is copied under [`prototype/`](prototype/) and is the reference for detection. This repository is the planning foundation and a runnable skeleton. The detector is not wired into the API yet.
 
@@ -10,16 +10,16 @@ FastAPI for the HTTP API, MongoDB for storage, and a separate worker process for
 
 ```mermaid
 flowchart TD
-  client[Client] --> api[FastAPI]
+  client[Grok Bot and API clients] --> api[FastAPI]
   api --> ctrl[Controller]
   ctrl --> mod[Module]
   mod --> mongo[(MongoDB)]
   worker[Worker] --> mod
-  worker --> exchanges[Binance / Bybit / OKX]
-  worker --> alerts[Webhook notifier]
+  worker --> venues[CEX klines and DEX quotes]
+  worker --> feed[Alert feed the bot polls]
 ```
 
-The worker loads a watchlist and the time@mode parameters, fetches **closed** candles, runs the pure detector, upserts signals by a deterministic id, and hands new signals to a pluggable notifier. The first notifier is a webhook. `prototype/state.json` is replaced by a unique index on `signal_id`.
+The worker loads the ladder and the enabled symbols from Mongo, fetches closed candles, resamples bars a venue does not list, runs time@mode, scores confluence, sizes a planned position, and inserts a pending alert. The bot polls `GET /api/v1/alerts/feed` and acks it. Webhooks and email are later channel kinds. `prototype/state.json` is replaced by a unique index on `signal_id`.
 
 Libraries:
 
@@ -33,21 +33,26 @@ Details, the verifik mapping, and the request flow are in [docs/architecture.md]
 ## Layout
 
 ```text
-app/                      FastAPI app, worker, document registry
-Core/                     config, database, mongo_orm, errors, http, auth
+app/                         FastAPI app, worker, document registry
+Core/                        config, database, mongo_orm, planning seeds
 Repositories/
-  MarketData/             candle fetch and optional cache
-  Exchanges/              ordered public kline sources
-  Strategies/TimeMode/    pure time@mode rules and parameters
-  Signals/                signals and scan runs
-  Watchlists/
-  Alerts/                 delivery records and the Notifier interface
+  Users/                     account risk profiles attach to
+  Symbols/                   every pair to monitor
+  Settings/                  ladder, scanner, arbitrage settings
+  Exchanges/                 CEX connectors and symbol style
+  Dexes/                     DEX connectors
+  MarketData/                candles and resampling
+  Strategies/TimeMode/       mode and block detection
+  Strategies/Confluence/     entry score and entry plans
+  Signals/
+  Watchlists/                optional subsets of symbols
+  Risk/                      stops, size, targets
+  Positions/                 planned trades and lifecycle
+  Alerts/                    Grok Bot feed; webhook and email later
   Backtests/
-  Arbitrage/              reserved, no rules yet
-  Futures/Positions/      reserved
-prototype/                the reference scanner, unchanged in behavior
-docs/                     planning docs
-.cursor/rules/            repository convention for agents
+  Arbitrage/                 net spreads, no orders
+prototype/                   reference scanner, behavior unchanged
+docs/                        planning docs
 ```
 
 Each active domain folder contains `controllers/`, `models/`, `modules/`, `routes/`, `middlewares/`, `helpers/`, and `tests/`.
@@ -57,6 +62,7 @@ Each active domain folder contains `controllers/`, `models/`, `modules/`, `route
 | Doc | What it decides |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Layers, Repositories pattern, request flow, worker, query builder |
+| [docs/repositories.md](docs/repositories.md) | Every domain: files, endpoints, collections, fields, indexes |
 | [docs/data-model.md](docs/data-model.md) | Collections, fields, indexes |
 | [docs/api-spec.md](docs/api-spec.md) | Endpoints, including what the skeleton actually serves |
 | [docs/strategy-spec.md](docs/strategy-spec.md) | time@mode as implementable rules, the 18/23 baseline, open questions |
@@ -131,4 +137,4 @@ python3 prototype/validate.py
 
 ## What this pass does not do
 
-It does not port detection, write to Mongo, send alerts, or ship a UI. Those are roadmap phases 1 through 7. Open questions for Miguel are collected in [docs/strategy-spec.md](docs/strategy-spec.md).
+It does not port detection, write to Mongo, size a live account, send an order, or push a chat message. The routes that exist return seeds or empty pages. Open questions that Miguel has not answered are listed at the end of [docs/strategy-spec.md](docs/strategy-spec.md).

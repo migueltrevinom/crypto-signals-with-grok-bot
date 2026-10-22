@@ -1,93 +1,89 @@
 # Roadmap
 
-Phases are ordered so each one leaves a runnable system. Dates are not estimated. A phase is done when its checks pass, not when a branch is opened.
+Phases are ordered so each one leaves a runnable system. Dates are not estimated. A phase is done when its checks pass.
 
-The behavior oracle through phase 4 is `prototype/`: `timemode.py`, `data.py`, `scan.py`, `validate.py`, and the recorded score in `validation_results.txt` (18 of 23 chart checks). Do not retune rules to chase the five misses unless Miguel answers the matching open question in [strategy-spec.md](strategy-spec.md).
+The detector oracle is still `prototype/`: `timemode.py` and `validate.py`, score 18 of 23. Do not retune ATR or wick selection to chase the five misses. Do apply Miguel's resolved decisions on top of that oracle: 6h SMA, the new ladder, resampling, confluence, risk profiles, the symbols collection, the Grok Bot feed, and arbitrage records. Those are specified in [strategy-spec.md](strategy-spec.md) and [repositories.md](repositories.md).
 
-## Phase 0 — Planning foundation (this branch)
+## Phase 0 — Planning foundation
 
-- Docs, cursor rule, folder skeleton, FastAPI health route, stub domain routes.
-- `development`, `staging`, and `production` branches exist from `main`.
-- Prototype copied under `prototype/` and not imported by the app.
+Docs, cursor rule, folder skeleton, health route, placeholder domain routes. This phase includes the update for Miguel's answers. Detection, sizing, and delivery are not implemented.
 
-Done when `/health` returns `status: ok` and the docs describe the domains, collections, and endpoints.
+## Phase 1 — Port detection and candles
 
-## Phase 1 — Port the scanner
+- Move `prototype/timemode.py` into `Strategies/TimeMode` without changing mode or block math, except the SMA filter reads the 6h series.
+- Move fetching into Exchanges. Symbol mapping uses `concat`, `dash`, and `alias`. The OKX `*-USDT` slice is not ported.
+- MarketData resamples missing ladder bars onto the Binance grid. A fixture test compares one week of native opens before a venue's native 3d, 6h, or 1M is trusted.
+- `timeframe_in_control` is implemented as specified.
+- Worker `--once` writes signals. Dedup is the `signal_id` index.
+- Replay stays at least 18/23 on the mode checks. The three block/entry checks are re-run with the 6h SMA and the difference is recorded. 1h and 30m checks stay as detector tests, not as live entry timeframes.
 
-Move detection and fetching behind the domains without changing results.
+## Phase 2 — Mongo settings and the read API
 
-- `Repositories/Strategies/TimeMode` gets the pure functions from `prototype/timemode.py` (`atr_rma`, `sma`, `detect_modes`, `detect_blocks`, `params_for`).
-- `Repositories/Exchanges` and `Repositories/MarketData` get the fallback fetch from `prototype/data.py`. Fix the OKX symbol mapping so non-USDT pairs (ETHBTC, ARBBTC) are not rewritten to `*-USDT`. Binance and Bybit already use the symbol as given.
-- Worker loop: read the default watchlist and active strategy config (seed them from `prototype/config.json` on empty collections), fetch closed candles, detect, upsert `signals` by `signal_id`, write a `scan_runs` document.
-- Delete the `state.json` path. Uniqueness is the index.
-- Connect Mongo on API and worker startup. `/health` pings it.
-- Replay `prototype/validate.py` cases through the ported functions. Score must stay at least 18/23 on the same checks. Check in a test that does not depend on a live exchange if fixtures are captured; until then the network replay can be marked manual.
-- APScheduler in the worker at `SCAN_INTERVAL_SECONDS`. `--once` runs a single pass.
+- Implement `build_query`.
+- Seed `app_settings`, `strategy_configs`, `confluence_configs`, and the default `risk_profiles` row from `Core/planning_seeds.py`.
+- Symbols API. A sync job can fill listings from public instrument endpoints. USDT is preferred, not exclusive.
+- Users: one seeded account, still behind the shared API key.
+- Watchlists point at symbol ids.
+- Remove the runtime read of `prototype/config.json` once the seed exists. Keep the file as the replay oracle.
 
-Exit rule: a `--once` scan against live or fixture data inserts signals, a second `--once` inserts zero new rows, and the replay score does not drop.
+## Phase 3 — Confluence and entry plans
 
-## Phase 2 — Read and manage API
+- `confluence_module.score` uses the seeded weights.
+- Entry plans are stored. A second scan expires a plan whose trigger is gone and does not duplicate it.
+- Unit fixtures cover: weekly and daily agree and 4h triggers; decision timeframes conflict and the penalty applies; SMA fails and the score is zero; no 1h entry is produced.
 
-Replace the empty list stubs with `build_query`.
+## Phase 4 — Risk and planned positions
 
-- Implement `Core.mongo_orm.build_query` for the operators in the architecture doc, with tests against a Mongo instance or a disposable container.
-- Signals list, get, and status patch.
-- Watchlist CRUD.
-- `PUT /strategies/time-mode` versions the config.
-- `POST /scanner/runs` records a scan run the worker picks up (a `queued` scan run is enough; no second queue).
-- Remove `Core.prototype_config` once seeding and the PUT path cover it.
-- API key required in the staging environment.
+- Resolve the most specific profile.
+- Size with the formula in the repositories doc. Null equity yields a position with `size_base: null` and a clear alert payload.
+- Worker writes `planned` positions and `position_events`.
+- PATCH to `active` or `cancelled` works. Later candles move `stopped`, `target_hit`, and `exited` without sending an order.
 
-## Phase 3 — Alerts
+## Phase 5 — Grok Bot alert feed
 
-- `alert_channels` CRUD, URL masked on list.
-- `WebhookNotifier` posts the signal JSON. Timeouts and non-2xx become `failed` with `last_error`.
-- Unique `(signal_id, channel_id)` so a re-scan does not double-send.
-- Test-send and retry endpoints.
-- The notifier registry stays the only place that knows `kind`.
+- Pending rows for entry plans, positions that need equity, and later arbitrage.
+- `GET /alerts/feed` and `POST /alerts/{id}/ack`.
+- Uniqueness stops a second row for the same subject and channel.
+- Webhooks and email stay unimplemented.
 
-## Phase 4 — Backtests
+## Phase 6 — Backtests
 
-- `POST /backtests` runs the same pure functions over a closed-candle range and writes `backtest_events`.
-- The 23 chart checks become the first fixture backtest, with the five known misses asserted as misses so a "fix" shows up in review.
-- Summary is signal counts, not PnL. No stops and no size are invented here.
-- Candle cache fills as a side effect when it saves requests. Correctness does not depend on the cache.
+- Same functions as the live path, over a historical range.
+- Summary includes signal counts, entry plans, and hypothetical R from the planned stop and targets.
+- The 23 chart checks are a fixture. The five known misses stay misses.
 
-## Phase 5 — Futures
+## Phase 7 — Arbitrage detection
 
-Blocked on Miguel for stop placement, size, and which contract type (USDT-M, coin-M, hedge mode). The domain folder already exists.
+- CEX quotes from the enabled exchanges. DEX quotes from the enabled dex venues. Both start disabled where the connector does not exist yet.
+- Net spread after fees, the flat slippage bps, and transfer or gas.
+- Opportunities stored. Orders are not sent. `place_orders` stays false.
+- An opportunity becomes a feed row.
 
-- Futures klines on the same fallback idea, behind `market: "futures"`.
-- Run the same time@mode functions. Do not fork the rules.
-- `positions` registered and exposed. A position opens on `block_breakout_entry` and closes on `exit` only if he wants the bot to track positions. Until then, signals stay signals.
+## Phase 8 — Futures candles
 
-## Phase 6 — Arbitrage
+Same detector, confluence, and risk path with `market: futures` and `max_leverage` from the profile. Blocked on the contract-type question (USDT-M, coin-M, hedge mode). No separate domain.
 
-Blocked on a written rule set. The folder stays empty of logic. No spread math, no exchange transfer assumptions, and no default strategy "to have something". When rules exist they get a strategy spec of the same kind as time@mode, then a module, then routes.
+## Phase 9 — Webhooks and email
 
-## Phase 7 — A simple UI
+Implement the two notifier classes. Mask secrets. This is after the Grok Bot feed is in use.
 
-A separate client that talks to this API. It is not a domain under `Repositories/`.
+## Phase 10 — A simple UI
 
-- Show the signal list, the TradingView link, watchlist edit, and strategy params.
-- No new detection rules in the UI.
-- CORS and auth for a browser are decided here, not before.
+A separate client. It reads the feed, the position list, and the settings. It is not a repository domain. CORS is decided here.
 
-## Explicitly out of scope until a later decision
+## Out of scope
 
-- Order routing or placing trades.
-- Stop-loss and position size (no chart shows a stop).
-- R.E.Signal V3.3 and the blue/grey markers.
-- Multi-user accounts and verifik-style client scoping.
-- A message bus.
+- Submitting orders or swaps.
+- R.E.Signal V3.3.
+- Verifik-style multi-tenant client ids.
+- A message bus. The bot polls.
 
 ## Suggested PR slicing
 
-One PR per phase is too big for phase 1. A workable split:
-
-1. Pure port of `timemode.py` plus unit tests with captured candles, no I/O.
-2. Exchange fetch behind MarketData, including the OKX symbol fix, with recorded HTTP fixtures.
-3. Mongo signal upsert and the worker `--once` path.
-4. Replay test wired into CI once fixtures exist.
-
-Phases 2 and 3 can follow the same "read path, then write path" split.
+1. Pure port of detection, 6h SMA injected as a series, replay tests.
+2. Symbol styles and resampling, with recorded HTTP fixtures.
+3. `build_query` and the settings seed.
+4. Confluence score tests, no I/O.
+5. Risk formula tests, then position writes.
+6. Alert feed.
+7. Arbitrage net-spread tests with fixture quotes.
