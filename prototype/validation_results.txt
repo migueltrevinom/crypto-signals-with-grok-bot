@@ -1,0 +1,27 @@
+PASS ETHBTC 1D mode1 Sep17 bear 0.72ATR :: conf 2021-09-17 level 0.074022 (doc 0.07402) len 8 (doc 8) dist 0.75 ATR ['atr_expansion'] body_crosses=True -> expiry 2021-09-24
+PASS ETHBTC 1D mode1 Sep17 bear 0.72ATR expiry :: detector 2021-09-24 vs doc 2021-09-24
+PASS ETHBTC 1D 2021-10-04 NOT a confirmation (0.13/0.32 ATR) :: correctly ignored
+PASS ETHBTC 1D 2021-10-05 NOT a confirmation (0.13/0.32 ATR) :: correctly ignored
+PASS ETHBTC 1D mode2 Oct6 bear 1.82ATR :: conf 2021-10-06 level 0.069164 (doc 0.06918) len 14 (doc 14) dist 1.84 ATR ['atr_expansion', 'close_outside_range', 'clear_gap'] body_crosses=False -> expiry 2021-10-19
+PASS ETHBTC 1D mode2 Oct6 bear 1.82ATR expiry :: detector 2021-10-19 vs doc 2021-10-19
+PASS ETHBTC 1D Oct19 expiry lands on trend low 0.059323 :: expiry signal=True low=0.059323 new_extreme=True
+PASS ETHBTC 1D mode3 Oct18 bear (0.73ATR) :: conf 2021-10-18 level 0.06245 (doc 0.06245) len 8 (doc 8) dist 0.73 ATR ['atr_expansion'] body_crosses=True -> expiry 2021-10-25
+PASS ETHBTC 1D Oct20 engulfing bias flip to bullish :: flip level 0.06245 dist 0.22 ATR
+   detector confirmations Feb-Apr 2021: [('2021-02-08', 'bear', 12, 0.04058, '2021-02-19'), ('2021-02-14', 'bear', 5, 0.03918, '2021-02-18'), ('2021-02-19', 'bear', 6, 0.03689, '2021-02-24'), ('2021-03-06', 'bull', 10, 0.032, '2021-03-15'), ('2021-03-28', 'bear', 15, 0.03094, '2021-04-11'), ('2021-03-29', 'bull', 7, 0.0307, '2021-04-04'), ('2021-04-14', 'bull', 12, 0.03593, '2021-04-25'), ('2021-04-20', 'bull', 6, 0.0389, '2021-04-25'), ('2021-04-27', 'bull', 5, 0.04632, '2021-05-01')]
+MISS ETHBTC 1D bear 9-bar mode expiring 2021-02-28 :: not found
+MISS ETHBTC 1D bull 6-bar mode expiring 2021-03-11 :: not found
+MISS ETHBTC 1D bull 5-bar mode expiring 2021-04-02 :: not found
+MISS ETHBTC 1D bull 6-bar mode expiring 2021-04-02 :: not found
+PASS ETHBTC 1D bull 12-bar mode expiring 2021-04-25 :: exact
+PASS ETHBTC 1D bull 6-bar mode expiring 2021-04-25 :: exact
+PASS ETHBTC 1W 2021-03-29 bull mode 0.0314/6 bars -> 2021-05-10 :: level 0.03145 len 6 dist 0.95 ['atr_expansion', 'close_outside_range'] expiry 2021-05-10
+MISS ETHBTC 1W 2021-04-12 bull mode 0.03848/5 bars -> 2021-05-17 :: not detected; nearby [('2021-03-29', 'mode_confirmed', 0.03145)]
+PASS ETHBTC 1W 2021-06-07 bear mode 0.0735/5 bars -> 2021-07-12 :: level 0.07374 len 5 dist 1.12 ['atr_expansion'] expiry 2021-07-12
+PASS ARBBTC 1D block 0.00003014 -> 6h long entry Dec 22 06:00 UTC :: [('2023-12-22 06:00', '0.00003014', 0.52, 'exp')]
+PASS ARBBTC 6h block 0.00003227 -> 1h long entry Dec 27 :: [('2023-12-27 11:00', '0.00003227', 0.34)]
+   ETH 30m long signals Feb 10-13: [('block_breakout_entry', '2024-02-10 02:00', 2503.2, 2505.81), ('exit', '2024-02-10 07:30', 2503.2, 2495.21), ('block_breakout_entry', '2024-02-10 20:30', 2503.2, 2506.21), ('exit', '2024-02-10 22:30', 2503.2, 2495.99), ('block_breakout_entry', '2024-02-11 00:30', 2503.2, 2504.08), ('exit', '2024-02-12 04:30', 2503.2, 2494.76), ('block_breakout_entry', '2024-02-12 14:30', 2503.2, 2528.2), ('block_breakout_entry', '2024-02-12 15:30', 2531.28, 2557.87)]
+PASS ETHUSDT 6h block ~2503-2504 -> 30m entry Feb 11 00:30 UTC (Feb 10 19:30 UTC-5) :: entries [('2024-02-10 02:00', 2503.2), ('2024-02-10 20:30', 2503.2), ('2024-02-11 00:30', 2503.2), ('2024-02-12 14:30', 2503.2), ('2024-02-12 15:30', 2531.28)]
+PASS ETHUSDT 30m exit early Feb 12 (~08:30-09:00 UTC) :: exits ['2024-02-10 07:30', '2024-02-10 22:30', '2024-02-12 04:30']
+PASS ETHUSDT 30m re-entry Feb 12 14:30 UTC (09:30 UTC-5) :: entries ['2024-02-10 02:00', '2024-02-10 20:30', '2024-02-11 00:30', '2024-02-12 14:30', '2024-02-12 15:30']
+
+SCORE: 18/23 documented checks reproduced

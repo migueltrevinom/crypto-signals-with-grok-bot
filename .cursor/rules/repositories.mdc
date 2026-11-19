@@ -1,0 +1,25 @@
+---
+description: Repositories architecture for this Python service. Equivalent of verifik-backend's repositories rule.
+alwaysApply: true
+---
+
+Use the repository layout under `Repositories/` and the shared helpers in `Core/`. See `docs/architecture.md` and `docs/coding-conventions.md`.
+
+- One domain per folder: `controllers/`, `models/`, `modules/`, `routes/`, `middlewares/`, `helpers/`, `tests/`.
+- Request flow is route → middleware (auth and Pydantic validation) → controller → module → model. Routes stay thin. Business rules live in modules.
+- Do not call a module from another module. Controllers and the worker (`app/worker.py`) are the composition roots. They may call several modules and pass the results in.
+- Every Mongo read goes through `Core.mongo_orm.build_query`. Do not call Motor or Beanie `find` from a module. Writes go through the Beanie document in that domain's `models/`.
+- Reach for `Core` before adding a new helper: config, database, errors, HTTP, cache, logging, pagination. Domain helpers stay pure and local.
+- Name files `snake_case` with the role suffix (`signal_controller.py`). Domain folders stay PascalCase, matching verifik-backend.
+- The domain list and the file each folder must contain are in `docs/repositories.md`. Do not add a Futures domain. Futures is `market: "futures"` on symbols, exchange sources, and positions.
+- Do not place orders or swaps. Arbitrage stores a net spread. Positions stay `planned` until a human or the bot marks them `active`. There is still no execution domain.
+- Alerts for the Grok Bot are rows the bot polls at `GET /api/v1/alerts/feed`. Do not push chat from the worker. Webhook and email notifiers stay unwired until their phase.
+- The 6h SMA and the ladder `4h, 6h, 8h, 1d, 3d, 1w, 1M` come from Mongo settings (`Core/planning_seeds.py` until the seed is inserted). Do not bring back `ltf_map` or an entry-timeframe SMA.
+- Symbol mapping is `concat`, `dash`, or `alias` on the exchange source. Do not port the OKX `symbol[:-4] + "-USDT"` slice.
+- The product is multi-tenant from the model onward. Miguel is the `owner` while `PUBLIC_SIGNUP` is false. Do not add a second, public-only schema later. See `docs/saas.md`.
+- Do not edit or delete `signal_logs` rows. Outcomes are a different collection. Do not publish a signal before its `visible_at`.
+- Do not enable public signup or live payments. The gate is CSA Staff Notice 31-369 and NI 31-103 s. 8.25, and this repo does not answer it. See `docs/saas.md` and `Repositories/Compliance`.
+- v1 does not store user exchange keys. Subscriber execution is a signed webhook. `release_at` is enforced when a publication is written and again on every read.
+- Do not stamp a swing on its pivot bar. Stamp the confirming close. Do not update `signal_logs`.
+- Do not store raw user API keys, refresh tokens, card numbers, or exchange secrets. Store hashes or ciphertext.
+- The detection oracle is `prototype/`. Port mode and block math as it stands. Resolved product rules (SMA, ladder, confluence, risk) sit on top and are specified in `docs/strategy-spec.md`. Remaining open questions are at the bottom of that file.
