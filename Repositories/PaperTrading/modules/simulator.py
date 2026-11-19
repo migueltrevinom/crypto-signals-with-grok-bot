@@ -1,9 +1,9 @@
 """Paper trades. No live orders.
 
-One open trade per pair per direction. A same-direction signal while that
-side is open is counted as blocked and is not entered. Exit rules are a
-setting: baseline (fixed stop or two closes), trail, opposite signal, or
-two closes only.
+One open trade per pair. A second signal while that trade is open is blocked,
+unless the exit setting closes on an opposite signal and then reverses.
+Exit rules are a setting: baseline (fixed stop or two closes), trail,
+opposite signal, or two closes only.
 """
 
 from dataclasses import dataclass, field
@@ -100,14 +100,28 @@ def protective_stop(
     return stop
 
 
+def stop_beyond(
+    direction: str, price: float, anchor: float, atr: float, buffer_atr: float
+) -> float | None:
+    """Stop beyond a structure price by a whole number of ATRs.
+
+    Returns None when the anchor is already on the wrong side of price, so a
+    variant does not invent a stop that the structure did not give it.
+    """
+    if atr <= 0 or buffer_atr <= 0:
+        return None
+    buffer = buffer_atr * atr
+    if direction == "long":
+        stop = anchor - buffer
+        return stop if stop < price else None
+    stop = anchor + buffer
+    return stop if stop > price else None
+
+
 def _fill(price: float, direction: str, slippage_bps: float, *, entering: bool) -> float:
     slip = slippage_bps / 10_000
     worse = slip if (direction == "long") == entering else -slip
     return price * (1 + worse)
-
-
-def _other(direction: str) -> str:
-    return "short" if direction == "long" else "long"
 
 
 class _Open:
@@ -137,7 +151,7 @@ def simulate(
     rules = EXIT_MODES[exit_mode]
     entries = sorted(entries, key=lambda item: (item.close_time, item.timeframe, item.direction))
     trails = sorted(trails or [], key=lambda item: item.time)
-    open_book: dict[str, _Open | None] = {"long": None, "short": None}
+    state: dict[str, _Open | None] = {"pos": None}
     closed: list[PaperTrade] = []
     blocked = 0
     cash = equity
@@ -207,47 +221,45 @@ def simulate(
         return inside and sequence
 
     def _advance(until: datetime) -> None:
-        for direction in ("long", "short"):
-            position = open_book[direction]
-            if position is None:
-                continue
-            bars = bars_by_tf.get(position.entry.timeframe, [])
-            index = position.next_index
-            while index < len(bars):
-                bar = bars[index]
-                if bar.close_time <= position.entry.close_time:
-                    index += 1
-                    continue
-                if bar.close_time > until:
-                    break
-                _ratchet(position, bar)
-                reason = "trail" if position.stop != position.initial_stop else "stop"
-                if rules["stop"] and direction == "long" and bar.low <= position.stop:
-                    _close(position, position.stop, bar.close_time, reason)
-                    open_book[direction] = None
-                    break
-                if rules["stop"] and direction == "short" and bar.high >= position.stop:
-                    _close(position, position.stop, bar.close_time, reason)
-                    open_book[direction] = None
-                    break
-                if _two_close(position, bars, index):
-                    _close(position, bar.close, bar.close_time, "two_lower_closes")
-                    open_book[direction] = None
-                    break
+        position = state["pos"]
+        if position is None:
+            return
+        bars = bars_by_tf.get(position.entry.timeframe, [])
+        index = position.next_index
+        while index < len(bars):
+            bar = bars[index]
+            if bar.close_time <= position.entry.close_time:
                 index += 1
-            if open_book[direction] is not None:
-                open_book[direction].next_index = index
+                continue
+            if bar.close_time > until:
+                break
+            _ratchet(position, bar)
+            reason = "trail" if position.stop != position.initial_stop else "stop"
+            hit = position.entry.direction == "long" and bar.low <= position.stop
+            hit = hit or (position.entry.direction == "short" and bar.high >= position.stop)
+            if rules["stop"] and hit:
+                _close(position, position.stop, bar.close_time, reason)
+                state["pos"] = None
+                return
+            if _two_close(position, bars, index):
+                _close(position, bar.close, bar.close_time, "two_lower_closes")
+                state["pos"] = None
+                return
+            index += 1
+        if state["pos"] is not None:
+            state["pos"].next_index = index
 
     for entry in entries:
         _advance(entry.close_time)
+        position = state["pos"]
+        if position is not None:
+            if rules["opposite"] and position.entry.direction != entry.direction:
+                _close(position, entry.price, entry.close_time, "opposite_signal")
+                state["pos"] = None
+            else:
+                blocked += 1
+                continue
         if cash <= 0:
-            blocked += 1
-            continue
-        other = open_book[_other(entry.direction)]
-        if rules["opposite"] and other is not None:
-            _close(other, entry.price, entry.close_time, "opposite_signal")
-            open_book[_other(entry.direction)] = None
-        if open_book[entry.direction] is not None:
             blocked += 1
             continue
         stop_distance = abs(entry.price - entry.stop)
@@ -257,7 +269,7 @@ def simulate(
         fill = _fill(entry.price, entry.direction, slippage_bps, entering=True)
         fee_rate = TAKER_FEE.get(entry.exchange, 0.001)
         size = risk / stop_distance
-        open_book[entry.direction] = _Open(entry, fill, size, risk, fill * size * fee_rate)
+        state["pos"] = _Open(entry, fill, size, risk, fill * size * fee_rate)
 
     last_time = max(
         (bar.close_time for bars in bars_by_tf.values() for bar in bars),
@@ -267,9 +279,8 @@ def simulate(
         _advance(last_time)
 
     still_open: list[PaperTrade] = []
-    for position in open_book.values():
-        if position is None or last_time is None:
-            continue
+    position = state["pos"]
+    if position is not None and last_time is not None:
         bars = bars_by_tf.get(position.entry.timeframe, [])
         mark = bars[-1].close if bars else position.entry.price
         sign = 1 if position.entry.direction == "long" else -1

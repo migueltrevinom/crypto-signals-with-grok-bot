@@ -16,6 +16,7 @@ from Repositories.PaperTrading.modules.simulator import (
     TrailLevel,
     protective_stop,
     simulate,
+    stop_beyond,
 )
 from Repositories.Performance.modules.hashchain import GENESIS, chain_hash
 from Repositories.Strategies.TimeMode.helpers import timemode as ported
@@ -200,6 +201,36 @@ def test_same_direction_signal_is_blocked_and_counted() -> None:
     assert result.blocked == 1
     assert len(result.trades) == 1
     assert result.trades[0].realized is False
+
+
+def test_baseline_does_not_hold_both_directions() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    bars = [
+        CandleBar(
+            exchange="binance", symbol="BTCUSDT", timeframe="4h",
+            open_time=start + timedelta(hours=4 * i),
+            open=100, high=110, low=90, close=100, volume=1,
+        )
+        for i in range(4)
+    ]
+    long = EntrySignal(
+        "binance", "BTCUSDT", "4h", "long", bars[0].close_time, 100, 90, 4, 80,
+        9, "long", 99, 101, "test", {},
+    )
+    short = EntrySignal(
+        "binance", "BTCUSDT", "4h", "short", bars[2].close_time, 100, 110, 4, 120,
+        9, "short", 99, 101, "test", {},
+    )
+    result = simulate([long, short], {"4h": bars}, slippage_bps=0, exit_mode="baseline")
+    assert result.blocked == 1
+    assert len(result.trades) == 1
+    assert result.trades[0].direction == "long"
+
+
+def test_stop_beyond_rejects_an_anchor_through_price() -> None:
+    assert stop_beyond("long", 100, 90, 4, 0.25) == 89
+    assert stop_beyond("long", 100, 110, 4, 1.0) is None
+    assert stop_beyond("short", 100, 110, 4, 2.0) == 118
 
 
 def test_opposite_signal_closes_and_reverses() -> None:
