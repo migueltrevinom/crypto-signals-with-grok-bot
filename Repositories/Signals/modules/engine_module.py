@@ -59,6 +59,8 @@ class _Event:
     length: int
     low: float
     high: float
+    block_low: float | None = None
+    block_high: float | None = None
 
 
 def _dir_name(value: int, kind: str) -> str:
@@ -124,6 +126,11 @@ def _blocks(
         if sig["type"] != "block_breakout_entry":
             continue
         bar = ltf_bars[sig["bar"]]
+        block_index = int(sig["htf_block_bar"])
+        block_low = block_high = None
+        if 0 <= block_index < len(htf_bars):
+            block_low = float(htf_bars[block_index].low)
+            block_high = float(htf_bars[block_index].high)
         events.append(
             _Event(
                 type="block_breakout_entry",
@@ -138,6 +145,8 @@ def _blocks(
                 length=0,
                 low=float(bar.low),
                 high=float(bar.high),
+                block_low=block_low,
+                block_high=block_high,
             )
         )
     return events
@@ -158,7 +167,10 @@ def prepare(
     *,
     params: dict | None = None,
     window_start: datetime | None = None,
-) -> list[EntrySignal]:
+    require_sma: bool = True,
+    min_decision_tfs: int = 1,
+    with_trails: bool = True,
+) -> tuple[list[EntrySignal], list[TrailLevel]]:
     """Causal entries. `window_start` keeps live scans to recent bars."""
     params = params or detection_params()
     version = strategy_version(params)
@@ -172,6 +184,7 @@ def prepare(
             blocks.extend(
                 _blocks(series.get(htf, []), series.get(ltf, []), htf, ltf, params, (times, values))
             )
+    swings = _swing_index(series, int(params.get("swing_lookback", 5)))
     candidates = [
         item
         for item in modes + blocks
@@ -182,10 +195,12 @@ def prepare(
     chosen: dict[tuple, EntrySignal] = {}
     for candidate in candidates:
         side, sma_value = _sma_ok(times, values, candidate)
-        if side is None:
+        sma_pass = side in {"above", "below"}
+        if require_sma and not sma_pass:
             continue
-        score, hits = _score(candidate, modes, blocks, side)
-        if score < THRESHOLD or not hits:
+        score, hits = _score(candidate, modes, blocks, side if sma_pass else "")
+        decision = sorted({item.split(":", 1)[1] for item in hits if ":" in item})
+        if score < THRESHOLD or len(decision) < min_decision_tfs:
             continue
         direction = "long" if candidate.direction in {"long", "bullish"} else "short"
         extreme = candidate.low if direction == "long" else candidate.high
@@ -227,10 +242,92 @@ def prepare(
                 "trigger": candidate.type,
                 "htf": candidate.htf,
                 "ohlcv_hash": None,
+                "sma_pass": sma_pass,
+                "decision_tfs": decision,
+                "wick": _mode_wick(candidate, modes),
+                "block": _block_extreme(candidate, blocks),
+                "swing": _last_swing(swings, candidate.timeframe, direction, candidate.close_time),
             },
         )
     entries = sorted(chosen.values(), key=lambda item: item.close_time)
-    return entries, _trail_levels(series, modes, params)
+    trails = _trail_levels(series, modes, params) if with_trails else []
+    return entries, trails
+
+
+def _swing_index(
+    series: dict[str, list[CandleBar]], lookback: int
+) -> dict[str, dict[str, list[tuple[datetime, float]]]]:
+    indexed: dict[str, dict[str, list[tuple[datetime, float]]]] = {}
+    for timeframe, bars in series.items():
+        if len(bars) < lookback * 2 + 2:
+            continue
+        data = _arrays(bars)
+        highs, lows = tm.swings(data["h"], data["l"], lookback)
+        indexed[timeframe] = {
+            "long": [
+                (bars[index + lookback].close_time, float(data["l"][index]))
+                for index in lows
+                if index + lookback < len(bars)
+            ],
+            "short": [
+                (bars[index + lookback].close_time, float(data["h"][index]))
+                for index in highs
+                if index + lookback < len(bars)
+            ],
+        }
+    return indexed
+
+
+def _last_swing(
+    indexed: dict[str, dict[str, list[tuple[datetime, float]]]],
+    timeframe: str,
+    direction: str,
+    when: datetime,
+) -> float | None:
+    rows = indexed.get(timeframe, {}).get(direction, [])
+    lo, hi = 0, len(rows)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if rows[mid][0] <= when:
+            lo = mid + 1
+        else:
+            hi = mid
+    if lo == 0:
+        return None
+    return rows[lo - 1][1]
+
+
+def _mode_wick(candidate: _Event, modes: list[_Event]) -> float | None:
+    if candidate.type == "mode_confirmed":
+        return candidate.level
+    best: _Event | None = None
+    for mode in modes:
+        if mode.timeframe != candidate.timeframe or mode.close_time > candidate.close_time:
+            continue
+        if mode.expiry_time is not None and mode.expiry_time < candidate.close_time:
+            continue
+        if not _same(mode.direction, candidate.direction):
+            continue
+        if best is None or mode.close_time >= best.close_time:
+            best = mode
+    return None if best is None else best.level
+
+
+def _block_extreme(candidate: _Event, blocks: list[_Event]) -> float | None:
+    long = candidate.direction in {"long", "bullish"}
+    if candidate.block_low is not None and candidate.block_high is not None:
+        return candidate.block_low if long else candidate.block_high
+    best: _Event | None = None
+    for block in blocks:
+        if block.close_time > candidate.close_time or block.block_low is None:
+            continue
+        if not _same(block.direction, candidate.direction):
+            continue
+        if best is None or block.close_time >= best.close_time:
+            best = block
+    if best is None or best.block_low is None or best.block_high is None:
+        return None
+    return best.block_low if long else best.block_high
 
 
 def build_entries(
