@@ -16,7 +16,7 @@ from Core.config import REPO_ROOT
 from Core.planning_seeds import CONFLUENCE_SEED
 from Core.prototype_config import load_prototype_config
 from Repositories.MarketData.modules.candles import CandleBar, ms
-from Repositories.PaperTrading.modules.simulator import EntrySignal, protective_stop
+from Repositories.PaperTrading.modules.simulator import EntrySignal, TrailLevel, protective_stop
 from Repositories.Performance.modules.hashchain import signal_key
 from Repositories.Strategies.TimeMode.helpers import timemode as tm
 
@@ -151,7 +151,7 @@ def _sma_series(bars_6h: list[CandleBar], length: int) -> tuple[np.ndarray, np.n
     return data["ct"].astype(np.int64), values
 
 
-def build_entries(
+def prepare(
     exchange: str,
     symbol: str,
     series: dict[str, list[CandleBar]],
@@ -229,7 +229,65 @@ def build_entries(
                 "ohlcv_hash": None,
             },
         )
-    return sorted(chosen.values(), key=lambda item: item.close_time)
+    entries = sorted(chosen.values(), key=lambda item: item.close_time)
+    return entries, _trail_levels(series, modes, params)
+
+
+def build_entries(
+    exchange: str,
+    symbol: str,
+    series: dict[str, list[CandleBar]],
+    *,
+    params: dict | None = None,
+    window_start: datetime | None = None,
+) -> list[EntrySignal]:
+    return prepare(
+        exchange, symbol, series, params=params, window_start=window_start
+    )[0]
+
+
+def _trail_levels(
+    series: dict[str, list[CandleBar]], modes: list[_Event], params: dict
+) -> list[TrailLevel]:
+    """Stops from confirmed 5-bar swings and new blocks, only on the TF in control."""
+    levels: list[TrailLevel] = []
+    lookback = int(params.get("swing_lookback", 5))
+    for timeframe, bars in series.items():
+        if len(bars) < lookback * 2 + 5:
+            continue
+        data = _arrays(bars)
+        highs, lows = tm.swings(data["h"], data["l"], lookback)
+        for index in lows:
+            confirm = index + lookback
+            if confirm >= len(bars):
+                continue
+            when = bars[confirm].close_time
+            if _timeframe_in_control(modes, when) != timeframe:
+                continue
+            levels.append(TrailLevel(when, float(data["l"][index]), "long", "swing"))
+        for index in highs:
+            confirm = index + lookback
+            if confirm >= len(bars):
+                continue
+            when = bars[confirm].close_time
+            if _timeframe_in_control(modes, when) != timeframe:
+                continue
+            levels.append(TrailLevel(when, float(data["h"][index]), "short", "swing"))
+        active = tm.htf_blocks(data, tm.params_for(params, timeframe))
+        seen: set[tuple] = set()
+        for bar_index, rows in active.items():
+            when = bars[bar_index].close_time
+            if _timeframe_in_control(modes, when) != timeframe:
+                continue
+            for direction, level, block_bar in rows:
+                key = (timeframe, direction, block_bar)
+                if key in seen:
+                    continue
+                seen.add(key)
+                side = "long" if direction > 0 else "short"
+                levels.append(TrailLevel(when, float(level), side, "block"))
+    levels.sort(key=lambda item: item.time)
+    return levels
 
 
 def _sma_ok(
