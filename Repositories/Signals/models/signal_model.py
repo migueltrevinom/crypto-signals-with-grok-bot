@@ -13,6 +13,7 @@ SignalType = Literal[
     "mode_expiry",
     "block_breakout_entry",
     "exit",
+    "entry_plan",
 ]
 Direction = Literal["bullish", "bearish", "long", "short"]
 LevelKind = Literal["mode", "block"]
