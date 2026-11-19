@@ -12,6 +12,8 @@ from Repositories.MarketData.modules.kucoin import parse_klines as parse_kucoin
 from Repositories.MarketData.modules.resample_module import resample
 from Repositories.PaperTrading.modules.simulator import (
     EntrySignal,
+    PaperTrade,
+    TrailLevel,
     protective_stop,
     simulate,
 )
@@ -170,11 +172,115 @@ def test_paper_stop_and_fee_math() -> None:
         strategy_version="test",
         inputs={},
     )
-    trades, equity = simulate([entry], {"4h": bars}, equity=10_000, slippage_bps=0)
-    assert len(trades) == 1
-    assert trades[0].exit_reason == "stop"
-    assert trades[0].fee > 0
-    assert equity < 10_000
+    result = simulate([entry], {"4h": bars}, equity=10_000, slippage_bps=0)
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].fee > 0
+    assert result.equity < 10_000
+
+
+def test_same_direction_signal_is_blocked_and_counted() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    bars = [
+        CandleBar(
+            exchange="binance", symbol="BTCUSDT", timeframe="4h",
+            open_time=start + timedelta(hours=4 * i),
+            open=100, high=101, low=99, close=100, volume=1,
+        )
+        for i in range(6)
+    ]
+
+    def _entry(index: int) -> EntrySignal:
+        return EntrySignal(
+            "binance", "BTCUSDT", "4h", "long", bars[index].close_time, 100, 90, 4, 80,
+            9, f"id{index}", 99, 101, "test", {},
+        )
+
+    result = simulate([_entry(0), _entry(2)], {"4h": bars}, slippage_bps=0, exit_mode="two_close")
+    assert result.blocked == 1
+    assert len(result.trades) == 1
+    assert result.trades[0].realized is False
+
+
+def test_opposite_signal_closes_and_reverses() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    bars = [
+        CandleBar(
+            exchange="binance", symbol="BTCUSDT", timeframe="4h",
+            open_time=start + timedelta(hours=4 * i),
+            open=100, high=110, low=90, close=100, volume=1,
+        )
+        for i in range(4)
+    ]
+    long = EntrySignal(
+        "binance", "BTCUSDT", "4h", "long", bars[0].close_time, 100, 90, 4, 80,
+        9, "long", 99, 101, "test", {},
+    )
+    short = EntrySignal(
+        "binance", "BTCUSDT", "4h", "short", bars[2].close_time, 100, 110, 4, 120,
+        9, "short", 99, 101, "test", {},
+    )
+    result = simulate([long, short], {"4h": bars}, slippage_bps=0, exit_mode="opposite")
+    closed = [trade for trade in result.trades if trade.realized]
+    assert closed[0].exit_reason == "opposite_signal"
+    assert any(trade.direction == "short" for trade in result.trades)
+
+
+def test_trail_can_lock_a_profit() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    bars = []
+    for offset, close, low in ((0, 100, 99), (1, 120, 112), (2, 111, 108)):
+        bars.append(
+            CandleBar(
+                exchange="binance",
+                symbol="BTCUSDT",
+                timeframe="4h",
+                open_time=start + timedelta(hours=4 * offset),
+                open=close,
+                high=close + 1,
+                low=low,
+                close=close,
+                volume=1,
+            )
+        )
+    entry = EntrySignal(
+        "binance", "BTCUSDT", "4h", "long", bars[0].close_time, 100, 90, 4, 90,
+        9, "trail", 99, 101, "test", {},
+    )
+    trail = TrailLevel(bars[1].close_time, 110, "long", "swing")
+    result = simulate(
+        [entry], {"4h": bars}, slippage_bps=0, exit_mode="trail", trails=[trail]
+    )
+    assert result.trades[0].exit_reason == "trail"
+    assert result.trades[0].r_multiple > 0
+
+
+def test_win_rate_ignores_open_trades() -> None:
+    from scripts.stats import window_metrics
+
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    daily = [
+        CandleBar(
+            exchange="binance", symbol="BTCUSDT", timeframe="1d",
+            open_time=start + timedelta(days=i),
+            open=100, high=101, low=99, close=100, volume=1,
+        )
+        for i in range(5)
+    ]
+    closed = PaperTrade(
+        "a", "binance", "BTCUSDT", "4h", "long", daily[0].close_time, daily[1].close_time,
+        100, 90, 110, "stop", 1, 10, 1.0, 0.2, True,
+    )
+    still = PaperTrade(
+        "b", "binance", "BTCUSDT", "4h", "long", daily[2].close_time, None,
+        100, 90, 100, "open", 1, -5, -0.5, 0.1, False, entry_fee=0.1,
+    )
+    stats = window_metrics([closed, still], daily, "2024-01-01", "2024-01-10")
+    assert stats["closed"] == 1
+    assert stats["win_rate"] == 1
+    assert stats["avg_r"] == 1
+    assert stats["realized"] == 10
+    assert stats["unrealized"] != 0
 
 
 def test_binance_fallback_uses_vision_after_primary_failure(monkeypatch) -> None:
