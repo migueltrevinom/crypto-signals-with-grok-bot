@@ -18,3 +18,4 @@ htmlcov/
 state.json
 prototype/state.json
 *.log
+reports/.cache/
